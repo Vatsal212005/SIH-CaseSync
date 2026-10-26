@@ -1,0 +1,2 @@
+"""AICTE CaseSync backend."""
+

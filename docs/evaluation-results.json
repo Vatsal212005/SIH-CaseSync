@@ -1,0 +1,30 @@
+{
+  "generated_by": "python -m app.ml.evaluate --sweep",
+  "dataset": "120 deterministic labelled synthetic case pairs",
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_backend": "sentence-transformers",
+  "selected": {
+    "threshold": 0.55,
+    "precision": 1.0,
+    "recall": 0.8667,
+    "f1": 0.9286,
+    "false_positive_count": 0,
+    "false_positive_rate": 0.0,
+    "false_negative_count": 8,
+    "false_negative_rate": 0.1333,
+    "confusion_matrix": {"tp": 52, "fp": 0, "tn": 60, "fn": 8}
+  },
+  "threshold_sweep": [
+    {"threshold": 0.45, "precision": 0.7895, "recall": 1.0, "f1": 0.8824, "fp": 16, "fn": 0},
+    {"threshold": 0.50, "precision": 0.8824, "recall": 1.0, "f1": 0.9375, "fp": 8, "fn": 0},
+    {"threshold": 0.55, "precision": 1.0, "recall": 0.8667, "f1": 0.9286, "fp": 0, "fn": 8},
+    {"threshold": 0.60, "precision": 1.0, "recall": 0.7333, "f1": 0.8462, "fp": 0, "fn": 16},
+    {"threshold": 0.65, "precision": 1.0, "recall": 0.6667, "f1": 0.8, "fp": 0, "fn": 20},
+    {"threshold": 0.68, "precision": 1.0, "recall": 0.6, "f1": 0.75, "fp": 0, "fn": 24},
+    {"threshold": 0.70, "precision": 1.0, "recall": 0.5333, "f1": 0.6957, "fp": 0, "fn": 28},
+    {"threshold": 0.75, "precision": 1.0, "recall": 0.4667, "f1": 0.6364, "fp": 0, "fn": 32},
+    {"threshold": 0.80, "precision": 1.0, "recall": 0.4, "f1": 0.5714, "fp": 0, "fn": 36},
+    {"threshold": 0.85, "precision": 1.0, "recall": 0.3333, "f1": 0.5, "fp": 0, "fn": 40}
+  ],
+  "caveat": "Synthetic evaluation only; not production-accuracy evidence."
+}
