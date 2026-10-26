@@ -53,6 +53,15 @@ function New-ProcessRecord([int]$Id, [string]$Role) {
     }
 }
 
+function Convert-ToUtcDate($Value) {
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    return [datetime]::Parse(
+        [string]$Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind
+    ).ToUniversalTime()
+}
+
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Python virtual environment not found at $python"
 }
@@ -74,7 +83,7 @@ if (Test-Path -LiteralPath $stateFile) {
             foreach ($record in @($savedState.Processes)) {
                 $process = Get-Process -Id ([int]$record.Id) -ErrorAction SilentlyContinue
                 if (-not $process) { continue }
-                $expected = [datetime]::Parse($record.StartTimeUtc).ToUniversalTime()
+                $expected = Convert-ToUtcDate $record.StartTimeUtc
                 if ($process.ProcessName -eq $record.Name -and
                     [math]::Abs(($process.StartTime.ToUniversalTime() - $expected).TotalSeconds) -lt 2) {
                     $records += $record
@@ -188,4 +197,3 @@ if ($OpenBrave) {
         Write-Warning "Brave was not found; open $frontendUrl manually."
     }
 }
-

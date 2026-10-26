@@ -3,6 +3,7 @@ import hashlib
 import io
 import re
 import uuid
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from app.ml.engine import MODEL_STATUS, normalize_name
 from app.models import *
 from app.schemas import *
 from app.services.audit import audit, notify
+from app.services.coordination import coordinate_finding
+from app.services.demo import advance_session, restart_session, session_payload, start_session
 from app.services.overlap import detect_overlaps
 from app.services.sla import deadline_for, run_sla_check
 from app.services.workflow import perform_action
@@ -64,7 +67,7 @@ def complaint_dict(row: Complaint, detail=False):
     data = {c.name: iso(getattr(row, c.name)) for c in row.__table__.columns}
     data.update(institution={"id": row.institution.id, "permanent_id": row.institution.permanent_id, "name": row.institution.name, "state": row.institution.state, "region": row.institution.region}, category=row.category.name, assigned_bureau={"id": row.assigned_bureau.id, "code": row.assigned_bureau.code, "name": row.assigned_bureau.name}, assigned_officer=({"id": row.assigned_officer.id, "name": row.assigned_officer.full_name} if row.assigned_officer else None))
     if detail:
-        data["actions"] = [{"id": a.id, "type": a.action_type, "remarks": a.remarks, "from_status": a.from_status, "to_status": a.to_status, "created_at": iso(a.created_at), "actor": a.actor.full_name} for a in sorted(row.actions, key=lambda x: x.created_at, reverse=True)]
+        data["actions"] = [{"id": a.id, "type": a.action_type, "remarks": a.remarks, "from_status": a.from_status, "to_status": a.to_status, "from_bureau_id": a.from_bureau_id, "to_bureau_id": a.to_bureau_id, "metadata": a.metadata_json or {}, "created_at": iso(a.created_at), "actor": a.actor.full_name, "actor_bureau": a.actor.bureau.code if a.actor.bureau else None} for a in sorted(row.actions, key=lambda x: x.created_at, reverse=True)]
     return data
 
 
@@ -150,6 +153,72 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     return {"kpis": {"total": total, **by_status, "overdue": overdue, "approaching": approaching, "overlaps": overlaps, "active_institutions": inst}, "category_distribution": [{"name": n, "value": c} for n, c in category_rows], "bureau_workload": [{"name": n, "value": c} for n, c in bureau_rows], "monthly": [{"month": str(m), "value": c} for m, c in month_rows[-12:]], "urgent": [complaint_dict(x) for x in urgent], "synthetic": settings.demo_mode}
 
 
+@router.get("/dashboard/actions")
+def dashboard_actions(mine_only: bool = False, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    now = datetime.now(timezone.utc)
+    base = scoped(db.query(Complaint).options(joinedload(Complaint.institution), joinedload(Complaint.assigned_bureau), joinedload(Complaint.assigned_officer), joinedload(Complaint.category)), user)
+    if mine_only:
+        base = base.filter(Complaint.assigned_officer_id == user.id)
+    active = base.filter(Complaint.status != CaseStatus.DISPOSED).all()
+    items = []
+
+    def add_case(case: Complaint, kind: str, reason: str, rank: int):
+        items.append({
+            "id": f"{kind}:{case.id}", "type": kind, "rank": rank,
+            "title": f"{case.complaint_no} · {case.institution.name}", "reason": reason,
+            "priority": case.priority.value, "status": case.status.value,
+            "responsible": case.assigned_officer.full_name if case.assigned_officer else case.assigned_bureau.name,
+            "due_date": iso(case.sla_deadline), "destination": f"/complaints/{case.id}",
+        })
+
+    for case in active:
+        deadline = aware(case.sla_deadline)
+        if deadline and deadline < now:
+            add_case(case, "overdue", "Configured SLA deadline has passed", 1 if case.priority == Priority.CRITICAL else 2)
+        elif deadline and deadline <= now + timedelta(days=3):
+            add_case(case, "approaching_sla", "Configured SLA deadline is approaching", 2)
+        if case.status == CaseStatus.TRANSFERRED:
+            add_case(case, "pending_transfer", "Receiving bureau must accept the transfer", 3)
+        if case.status == CaseStatus.ESCALATED:
+            add_case(case, "escalated", "Escalated complaint requires supervisory action", 3)
+        if not case.assigned_officer_id:
+            add_case(case, "unassigned", "No responsible case officer is assigned", 6)
+
+    overlap_query = db.query(OverlapFinding).filter(OverlapFinding.review_state == ReviewState.PENDING)
+    if not can_view_all(user):
+        visible_ids = [case.id for case in active]
+        overlap_query = overlap_query.filter(or_(OverlapFinding.complaint_a_id.in_(visible_ids), OverlapFinding.complaint_b_id.in_(visible_ids)))
+    for finding in overlap_query.order_by(OverlapFinding.hybrid_score.desc()).limit(20).all():
+        items.append({
+            "id": f"overlap:{finding.id}", "type": "overlap_review", "rank": 4,
+            "title": f"{finding.complaint_a.complaint_no} ↔ {finding.complaint_b.complaint_no}",
+            "reason": f"{finding.finding_type.replace('_', ' ')} requires human review",
+            "priority": finding.severity, "status": finding.review_state.value,
+            "responsible": "Authorized overlap reviewer", "due_date": None,
+            "destination": f"/overlaps/{finding.id}",
+        })
+
+    action_query = db.query(CoordinationActionItem, CoordinationRecord).join(CoordinationRecord, CoordinationRecord.id == CoordinationActionItem.coordination_id).filter(CoordinationActionItem.completed.is_(False))
+    if user.role == Role.CASE_OFFICER:
+        action_query = action_query.filter(CoordinationActionItem.assignee_id == user.id)
+    elif not can_view_all(user):
+        action_query = action_query.join(CoordinationParticipant, CoordinationParticipant.coordination_id == CoordinationRecord.id).filter(CoordinationParticipant.bureau_id == user.bureau_id)
+    if mine_only:
+        action_query = action_query.filter(CoordinationActionItem.assignee_id == user.id)
+    for action, record in action_query.limit(20).all():
+        assignee = db.get(User, action.assignee_id)
+        items.append({
+            "id": f"coordination:{action.id}", "type": "coordination_action", "rank": 5,
+            "title": record.title, "reason": action.title, "priority": "medium", "status": "open",
+            "responsible": assignee.full_name if assignee else "Unassigned",
+            "due_date": iso(action.due_date), "destination": f"/coordination/{record.id}",
+        })
+
+    items.sort(key=lambda row: (row["rank"], row["due_date"] or "9999-12-31", row["title"]))
+    counts = Counter(row["type"] for row in items)
+    return {"items": items[:40], "counts": dict(counts), "mine_only": mine_only, "rules": ["Overdue critical complaints", "Imminent deadlines", "Pending transfers and escalations", "High-priority overlap reviews", "Open coordination actions", "Unassigned cases"]}
+
+
 @router.get("/institutions")
 def institutions(q: str = "", state: str = "", region: str = "", institution_type: str = "", approval_status: str = "", page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     query = db.query(Institution)
@@ -172,8 +241,46 @@ def institution_detail(institution_id: str, db: Session = Depends(get_db), user:
     query = scoped(db.query(Complaint).options(joinedload(Complaint.institution), joinedload(Complaint.category), joinedload(Complaint.assigned_bureau), joinedload(Complaint.assigned_officer)), user).filter(Complaint.institution_id == institution_id)
     complaints = query.order_by(Complaint.created_at.desc()).all()
     now = datetime.now(timezone.utc)
-    counts = {"total_complaints": len(complaints), "active_cases": sum(c.status != CaseStatus.DISPOSED for c in complaints), "disposed_cases": sum(c.status == CaseStatus.DISPOSED for c in complaints), "overdue_cases": sum(c.status != CaseStatus.DISPOSED and c.sla_deadline and c.sla_deadline < now for c in complaints), "involved_bureaus": sorted({c.assigned_bureau.code for c in complaints})}
-    return {**institution_dict(item, counts), "complaints": [complaint_dict(x) for x in complaints]}
+    complaint_ids = [c.id for c in complaints]
+    findings = db.query(OverlapFinding).filter(or_(OverlapFinding.complaint_a_id.in_(complaint_ids), OverlapFinding.complaint_b_id.in_(complaint_ids))).order_by(OverlapFinding.detected_at.desc()).all() if complaint_ids else []
+    coordination_query = db.query(CoordinationRecord).join(CoordinationComplaint, CoordinationComplaint.coordination_id == CoordinationRecord.id).filter(CoordinationComplaint.complaint_id.in_(complaint_ids)).distinct()
+    if not can_view_all(user):
+        coordination_query = coordination_query.join(CoordinationParticipant, CoordinationParticipant.coordination_id == CoordinationRecord.id).filter(CoordinationParticipant.bureau_id == user.bureau_id)
+    coordination_rows = coordination_query.order_by(CoordinationRecord.updated_at.desc()).all()
+    counts = {
+        "total_complaints": len(complaints),
+        "active_cases": sum(c.status != CaseStatus.DISPOSED for c in complaints),
+        "disposed_cases": sum(c.status == CaseStatus.DISPOSED for c in complaints),
+        "overdue_cases": sum(c.status != CaseStatus.DISPOSED and c.sla_deadline and aware(c.sla_deadline) < now for c in complaints),
+        "potential_overlaps": sum(f.review_state == ReviewState.PENDING for f in findings),
+        "coordination_count": len(coordination_rows),
+        "involved_bureaus": sorted({c.assigned_bureau.code for c in complaints}),
+    }
+    category_distribution = Counter(c.category.name for c in complaints)
+    bureau_distribution = Counter(c.assigned_bureau.code for c in complaints)
+    status_distribution = Counter(c.status.value for c in complaints)
+    monthly_distribution = Counter(c.created_at.strftime("%Y-%m") for c in complaints)
+    actions = db.query(ComplaintAction).options(joinedload(ComplaintAction.actor)).filter(ComplaintAction.complaint_id.in_(complaint_ids)).order_by(ComplaintAction.created_at.desc()).limit(12).all() if complaint_ids else []
+    active_bureaus = sorted({c.assigned_bureau.code for c in complaints if c.status != CaseStatus.DISPOSED})
+    approaching = sum(c.status != CaseStatus.DISPOSED and c.sla_deadline and now <= aware(c.sla_deadline) <= now + timedelta(days=3) for c in complaints)
+    insights = [f"{counts['active_cases']} active complaints are assigned across {len(active_bureaus)} bureaus."]
+    if approaching: insights.append(f"{approaching} complaints are approaching their configured deadlines.")
+    if counts["potential_overlaps"]: insights.append(f"{counts['potential_overlaps']} overlap findings await authorized review.")
+    if counts["overdue_cases"]: insights.append(f"{counts['overdue_cases']} overdue complaints require operational attention.")
+    return {
+        **institution_dict(item, counts),
+        "complaints": [complaint_dict(x) for x in complaints],
+        "analytics": {
+            "monthly": [{"month": key, "value": value} for key, value in sorted(monthly_distribution.items())[-12:]],
+            "categories": [{"name": key, "value": value} for key, value in category_distribution.items()],
+            "bureaus": [{"name": key, "value": value} for key, value in bureau_distribution.items()],
+            "statuses": [{"name": key, "value": value} for key, value in status_distribution.items()],
+        },
+        "insights": insights,
+        "overlap_findings": [{"id": f.id, "type": f.finding_type, "severity": f.severity, "review_state": f.review_state.value, "detected_at": iso(f.detected_at)} for f in findings[:12]],
+        "coordination_records": [{"id": r.id, "title": r.title, "status": r.status, "target_date": iso(r.target_date)} for r in coordination_rows[:12]],
+        "recent_activity": [{"id": a.id, "complaint_id": a.complaint_id, "type": a.action_type, "remarks": a.remarks, "actor": a.actor.full_name, "created_at": iso(a.created_at)} for a in actions],
+    }
 
 
 @router.post("/institutions", dependencies=[Depends(verify_csrf)])
@@ -315,7 +422,15 @@ def complaint_detail(complaint_id: str, user: User = Depends(get_current_user), 
     data["attachments"] = [{c.name: iso(getattr(x, c.name)) for c in x.__table__.columns if c.name != "stored_name"} for x in db.query(ComplaintAttachment).filter_by(complaint_id=item.id).all()]
     findings = db.query(OverlapFinding).filter(or_(OverlapFinding.complaint_a_id == item.id, OverlapFinding.complaint_b_id == item.id)).all()
     data["overlaps"] = [finding_dict(x) for x in findings]
-    data["related_cases"] = [{c.name: iso(getattr(x, c.name)) for c in x.__table__.columns} for x in db.query(RelatedCaseLink).filter(or_(RelatedCaseLink.complaint_a_id == item.id, RelatedCaseLink.complaint_b_id == item.id), RelatedCaseLink.active.is_(True)).all()]
+    links = db.query(RelatedCaseLink).filter(or_(RelatedCaseLink.complaint_a_id == item.id, RelatedCaseLink.complaint_b_id == item.id), RelatedCaseLink.active.is_(True)).all()
+    data["related_cases"] = [{c.name: iso(getattr(x, c.name)) for c in x.__table__.columns} for x in links]
+    coordination_rows = db.query(CoordinationRecord).join(CoordinationComplaint, CoordinationComplaint.coordination_id == CoordinationRecord.id).filter(CoordinationComplaint.complaint_id == item.id).all()
+    journey = [{"id": a.id, "kind": "action", "type": a.action_type, "timestamp": iso(a.created_at), "actor": a.actor.full_name, "bureau": a.actor.bureau.code if a.actor.bureau else None, "from_bureau_id": a.from_bureau_id, "to_bureau_id": a.to_bureau_id, "from_status": a.from_status, "to_status": a.to_status, "remarks": a.remarks, "metadata": a.metadata_json or {}} for a in item.actions]
+    journey += [{"id": f.id, "kind": "overlap", "type": "overlap_detected", "timestamp": iso(f.detected_at), "actor": "CaseSync overlap engine", "bureau": None, "remarks": f"{f.finding_type.replace('_', ' ')} · semantic similarity {f.similarity_score:.0%}", "finding_id": f.id, "review_state": f.review_state.value} for f in findings]
+    journey += [{"id": link.id, "kind": "link", "type": "case_linked", "timestamp": iso(link.created_at), "actor": "Authorized reviewer", "bureau": None, "remarks": link.justification, "relation_type": link.relation_type} for link in links]
+    journey += [{"id": row.id, "kind": "coordination", "type": "coordination_started", "timestamp": iso(row.created_at), "actor": "Cross-bureau coordination", "bureau": None, "remarks": row.summary, "coordination_id": row.id} for row in coordination_rows]
+    data["journey"] = sorted(journey, key=lambda event: event["timestamp"])
+    data["coordination_records"] = [{"id": row.id, "title": row.title, "status": row.status, "target_date": iso(row.target_date)} for row in coordination_rows]
     return data
 
 
@@ -439,12 +554,34 @@ def review_overlap(finding_id: str, payload: ReviewInput, user: User = Depends(r
         ids = sorted([finding.complaint_a_id, finding.complaint_b_id])
         if not db.query(RelatedCaseLink).filter_by(complaint_a_id=ids[0], complaint_b_id=ids[1]).first(): db.add(RelatedCaseLink(complaint_a_id=ids[0], complaint_b_id=ids[1], relation_type=finding.finding_type, created_by_id=user.id, justification=payload.notes))
         if payload.create_coordination:
-            record = CoordinationRecord(title=f"Coordination: {finding.complaint_a.complaint_no} / {finding.complaint_b.complaint_no}", institution_id=finding.complaint_a.institution_id, owner_id=user.id, summary=payload.notes, target_date=date.today() + timedelta(days=14))
-            db.add(record); db.flush(); coordination_id = record.id
-            for bureau_id in {finding.complaint_a.assigned_bureau_id, finding.complaint_b.assigned_bureau_id}: db.add(CoordinationParticipant(coordination_id=record.id, bureau_id=bureau_id))
+            record, _ = coordinate_finding(db, finding, user, remarks=payload.notes)
+            coordination_id = record.id
     audit(db, user.id, "overlap.reviewed", "overlap", finding.id, after={"decision": payload.decision.value, "coordination_id": coordination_id})
     db.commit()
     return {"id": finding.id, "review_state": finding.review_state.value, "coordination_id": coordination_id}
+
+
+@router.post("/overlaps/{finding_id}/coordinate", dependencies=[Depends(verify_csrf)])
+def coordinate_overlap(finding_id: str, payload: CoordinationWizardInput, user: User = Depends(require_roles(Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.BUREAU_HEAD)), db: Session = Depends(get_db)):
+    finding = db.get(OverlapFinding, finding_id)
+    if not finding:
+        raise HTTPException(404, "Finding not found")
+    if user.role == Role.BUREAU_HEAD and user.bureau_id not in {finding.complaint_a.assigned_bureau_id, finding.complaint_b.assigned_bureau_id}:
+        raise HTTPException(403, "Finding is outside your bureau")
+    record, created = coordinate_finding(
+        db, finding, user,
+        owner_id=payload.owner_id,
+        bureau_ids=payload.bureau_ids,
+        officer_ids=payload.officer_ids,
+        next_action=payload.next_action,
+        assignee_id=payload.assignee_id,
+        due_date=payload.due_date,
+        remarks=payload.remarks,
+        request_key=payload.request_key,
+    )
+    db.commit()
+    action = db.query(CoordinationActionItem).filter_by(coordination_id=record.id).order_by(CoordinationActionItem.created_at).first()
+    return {"id": record.id, "created": created, "title": record.title, "owner_id": record.owner_id, "target_date": iso(record.target_date), "next_action": action.title if action else None, "assignee_id": action.assignee_id if action else None, "bureau_ids": [row.bureau_id for row in db.query(CoordinationParticipant).filter_by(coordination_id=record.id)]}
 
 
 @router.get("/coordination")
@@ -453,7 +590,22 @@ def coordination(user: User = Depends(get_current_user), db: Session = Depends(g
     if not can_view_all(user):
         query = query.join(CoordinationParticipant, CoordinationParticipant.coordination_id == CoordinationRecord.id).filter(CoordinationParticipant.bureau_id == user.bureau_id)
     rows = query.order_by(CoordinationRecord.updated_at.desc()).all()
-    return [{**{c.name: iso(getattr(r, c.name)) for c in r.__table__.columns}, "institution_name": name, "owner_name": owner, "participants": [x.bureau_id for x in db.query(CoordinationParticipant).filter_by(coordination_id=r.id)], "action_items": [{c.name: iso(getattr(x, c.name)) for c in x.__table__.columns} for x in db.query(CoordinationActionItem).filter_by(coordination_id=r.id)]} for r, name, owner in rows]
+    result = []
+    for r, name, owner in rows:
+        participants = db.query(CoordinationParticipant).filter_by(coordination_id=r.id).all()
+        actions = db.query(CoordinationActionItem).filter_by(coordination_id=r.id).all()
+        result.append({
+            **{c.name: iso(getattr(r, c.name)) for c in r.__table__.columns},
+            "institution_name": name,
+            "owner_name": owner,
+            # Preserve the original API contract (a list of bureau IDs) while
+            # exposing the richer participant data needed by the new UI.
+            "participants": [x.bureau_id for x in participants],
+            "participant_details": [{"bureau_id": x.bureau_id, "bureau_name": db.get(Bureau, x.bureau_id).name, "user_id": x.user_id, "user_name": db.get(User, x.user_id).full_name if x.user_id else None} for x in participants],
+            "complaint_ids": [x.complaint_id for x in db.query(CoordinationComplaint).filter_by(coordination_id=r.id)],
+            "action_items": [{**{c.name: iso(getattr(x, c.name)) for c in x.__table__.columns}, "assignee_name": db.get(User, x.assignee_id).full_name} for x in actions],
+        })
+    return result
 
 
 @router.post("/coordination", dependencies=[Depends(verify_csrf)])
@@ -465,8 +617,42 @@ def create_coordination(payload: CoordinationInput, user: User = Depends(require
     for case_id in payload.complaint_ids:
         complaint = db.get(Complaint, case_id)
         if not complaint or complaint.institution_id != payload.institution_id: raise HTTPException(422, "All complaints must belong to the coordination institution")
+        db.add(CoordinationComplaint(coordination_id=record.id, complaint_id=case_id))
     audit(db, user.id, "coordination.created", "coordination", record.id); db.commit()
     return {"id": record.id}
+
+
+@router.post("/demo/sessions", dependencies=[Depends(verify_csrf)])
+def create_demo_session(payload: DemoStartInput, user: User = Depends(require_roles(Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.BUREAU_HEAD)), db: Session = Depends(get_db)):
+    return session_payload(db, start_session(db, payload.scenario, user))
+
+
+@router.get("/demo/sessions/{session_id}")
+def get_demo_session(session_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not settings.demo_mode:
+        raise HTTPException(404, "Interactive demos are disabled")
+    session = db.get(DemoSession, session_id)
+    if not session:
+        raise HTTPException(404, "Demo session not found")
+    if session.created_by_id != user.id and user.role not in {Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.AUDITOR}:
+        raise HTTPException(403, "Demo session access denied")
+    return session_payload(db, session)
+
+
+@router.post("/demo/sessions/{session_id}/advance", dependencies=[Depends(verify_csrf)])
+def advance_demo(session_id: str, payload: DemoAdvanceInput, user: User = Depends(require_roles(Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.BUREAU_HEAD)), db: Session = Depends(get_db)):
+    session = db.get(DemoSession, session_id)
+    if not session:
+        raise HTTPException(404, "Demo session not found")
+    return session_payload(db, advance_session(db, session, user, payload.expected_step))
+
+
+@router.post("/demo/sessions/{session_id}/restart", dependencies=[Depends(verify_csrf)])
+def restart_demo(session_id: str, user: User = Depends(require_roles(Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.BUREAU_HEAD)), db: Session = Depends(get_db)):
+    session = db.get(DemoSession, session_id)
+    if not session:
+        raise HTTPException(404, "Demo session not found")
+    return session_payload(db, restart_session(db, session, user))
 
 
 @router.post("/coordination/{coordination_id}/actions", dependencies=[Depends(verify_csrf)])
@@ -672,5 +858,4 @@ def upsert_sla(payload: SlaInput, user: User = Depends(require_roles(Role.SYSTEM
 @router.post("/admin/run-sla", dependencies=[Depends(verify_csrf)])
 def trigger_sla(user: User = Depends(require_roles(Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN)), db: Session = Depends(get_db)):
     return run_sla_check(db)
-
 

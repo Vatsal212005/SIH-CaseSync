@@ -39,6 +39,15 @@ function Get-DescendantIds([int]$ParentId) {
     return $result
 }
 
+function Convert-ToUtcDate($Value) {
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    return [datetime]::Parse(
+        [string]$Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind
+    ).ToUniversalTime()
+}
+
 $targets = @()
 if (Test-Path -LiteralPath $stateFile) {
     $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
@@ -48,7 +57,7 @@ if (Test-Path -LiteralPath $stateFile) {
     foreach ($record in @($state.Processes)) {
         $process = Get-Process -Id ([int]$record.Id) -ErrorAction SilentlyContinue
         if (-not $process) { continue }
-        $expected = [datetime]::Parse($record.StartTimeUtc).ToUniversalTime()
+        $expected = Convert-ToUtcDate $record.StartTimeUtc
         $actual = $process.StartTime.ToUniversalTime()
         if ($process.ProcessName -eq $record.Name -and [math]::Abs(($actual - $expected).TotalSeconds) -lt 2) {
             $targets += Get-DescendantIds $process.Id
@@ -88,4 +97,3 @@ foreach ($port in @(3000, 8000)) {
 if (Test-Path -LiteralPath $stateFile) {
     Remove-Item -LiteralPath $stateFile -Force
 }
-

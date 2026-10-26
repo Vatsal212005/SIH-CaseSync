@@ -265,6 +265,8 @@ class CoordinationRecord(Base):
     status: Mapped[str] = mapped_column(String(40), default="open", index=True)
     summary: Mapped[str] = mapped_column(Text)
     target_date: Mapped[date | None] = mapped_column(Date)
+    source_finding_id: Mapped[str | None] = mapped_column(ForeignKey("overlap_findings.id"), nullable=True, index=True)
+    request_key: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -276,6 +278,14 @@ class CoordinationParticipant(Base):
     bureau_id: Mapped[str] = mapped_column(ForeignKey("bureaus.id"))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
     __table_args__ = (UniqueConstraint("coordination_id", "bureau_id"),)
+
+
+class CoordinationComplaint(Base):
+    __tablename__ = "coordination_complaints"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    coordination_id: Mapped[str] = mapped_column(ForeignKey("coordination_records.id", ondelete="CASCADE"), index=True)
+    complaint_id: Mapped[str] = mapped_column(ForeignKey("complaints.id", ondelete="CASCADE"), index=True)
+    __table_args__ = (UniqueConstraint("coordination_id", "complaint_id"),)
 
 
 class CoordinationActionItem(Base):
@@ -350,4 +360,20 @@ class ImportJob(Base):
     uploaded_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
+
+class DemoSession(Base):
+    __tablename__ = "demo_sessions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    scenario: Mapped[str] = mapped_column(String(40), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    current_step: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    institution_id: Mapped[str | None] = mapped_column(ForeignKey("institutions.id"), nullable=True)
+    complaint_ids: Mapped[list] = mapped_column(JSON, default=list)
+    finding_id: Mapped[str | None] = mapped_column(ForeignKey("overlap_findings.id"), nullable=True)
+    coordination_id: Mapped[str | None] = mapped_column(ForeignKey("coordination_records.id"), nullable=True)
+    result_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
