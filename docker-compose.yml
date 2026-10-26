@@ -1,0 +1,45 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: casesync
+      POSTGRES_USER: casesync
+      POSTGRES_PASSWORD: casesync
+    volumes:
+      - casesync_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U casesync -d casesync"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://casesync:casesync@db:5432/casesync
+      UPLOAD_DIR: /app/storage
+    volumes:
+      - casesync_uploads:/app/storage
+      - model_cache:/root/.cache/huggingface
+    ports: ["8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    ports: ["3000:3000"]
+    depends_on:
+      backend: {condition: service_healthy}
+volumes:
+  casesync_db:
+  casesync_uploads:
+  model_cache:
+
+
