@@ -51,11 +51,11 @@ test("central administrator reviews explainable overlap and creates coordination
   const finding=(await response.json()).items[0];
   expect(finding).toBeTruthy();
   await page.goto(`/overlaps/${finding.id}`);
-  await expect(page.getByText("AI-assisted evidence")).toBeVisible();
-  await page.getByRole("button",{name:"Confirmed"}).click();
+  await expect(page.getByText("AI Case Comparison")).toBeVisible();
+  await page.getByRole("button",{name:"Confirm relationship"}).click();
   await page.locator(".modal textarea").fill("Confirmed by the synthetic Playwright coordination journey.");
   await page.getByRole("button",{name:"Record decision"}).click();
-  await expect(page.getByText(/Review outcome:/)).toBeVisible();
+  await expect(page.getByText("Confirmed by the synthetic Playwright coordination journey.")).toBeVisible();
   await page.getByRole("button",{name:"Coordination Center"}).click();
   await expect(page.getByText("Coordination center")).toBeVisible();
 });

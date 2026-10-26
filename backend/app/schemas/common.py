@@ -95,6 +95,25 @@ class ActionItemInput(BaseModel):
     due_date: date | None = None
 
 
+class CoordinationWizardInput(BaseModel):
+    owner_id: str
+    bureau_ids: list[str] = Field(min_length=2)
+    officer_ids: list[str] = []
+    next_action: str = Field(min_length=3, max_length=255)
+    assignee_id: str
+    due_date: date
+    remarks: str = Field(min_length=3, max_length=5000)
+    request_key: str = Field(min_length=8, max_length=120)
+
+
+class DemoStartInput(BaseModel):
+    scenario: Literal["duplicate_investigations", "different_complaints", "sla_escalation"]
+
+
+class DemoAdvanceInput(BaseModel):
+    expected_step: int = Field(ge=0, le=10)
+
+
 class AdminUserInput(BaseModel):
     email: EmailStr
     full_name: str = Field(min_length=3, max_length=160)
