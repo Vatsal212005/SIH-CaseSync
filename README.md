@@ -1,287 +1,424 @@
-# AICTE CaseSync
+<div align="center">
 
-AICTE CaseSync is a production-structured demonstration of an internal complaint monitoring and cross-bureau coordination platform for SIH26264. It combines a role-aware operations console, auditable complaint workflows, institution intelligence, SLA monitoring, reports, private attachments, and an explainable human-in-the-loop overlap engine.
+# 🏛️ AICTE CaseSync
+### Intelligent Cross-Bureau Complaint Monitoring, AI Overlap Detection & Coordination Platform
+**Smart India Hackathon (SIH) | Problem ID: SIH26264**
 
-The repository runs either as a Docker deployment with PostgreSQL/pgvector or as a fully functional native Windows development installation with SQLite. The native launcher uses the same API, workflows, synthetic records, overlap engine and user interface; no government database, private API or external institutional system is required.
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Next.js 14](https://img.shields.io/badge/Next.js-14_App_Router-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
+[![PyTorch / MiniLM](https://img.shields.io/badge/AI_Engine-all--MiniLM--L6--v2-FF6F00?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
 
-> **Data notice:** AICTE supplied no official dataset, institution database, complaint history, or internal credentials. Every seeded institution, person and case is deterministic synthetic demonstration data, labeled in the database and UI. CaseSync does not claim official AICTE deployment or endorsement.
+<br />
 
-## Included capabilities
+![AICTE CaseSync Enterprise Platform](docs/assets/hero_banner.png)
 
-- Secure HttpOnly-cookie authentication, CSRF protection, password hashing, login lockout, server-side RBAC and bureau scoping.
-- Canonical institution registry with aliases, duplicate prevention, filters, detail intelligence and validated CSV import.
-- Complaint registration, assignment, remarks, transfer/acceptance, escalation, disposal, reopening, attachment storage, related-case links and immutable action history.
-- Hybrid overlap detection using canonical identity, bureau/activity rules and `sentence-transformers/all-MiniLM-L6-v2` embeddings stored in PostgreSQL with pgvector; deterministic degradation preserves workflows if the model is unavailable.
-- Explainable findings, severity, side-by-side comparison, persistent human review, suppression by text fingerprint, case linking and coordination creation.
-- Interactive evidence studio with three deterministic scenarios, full complaint text, visible MiniLM/rule evidence, explicit human review, coordination and SLA before/after states, technical/presentation modes, and recoverable sessions.
-- Central dashboard, database-backed global search, personal queues, notifications and idempotent scheduled SLA reminders.
-- Coordination records, participants, owners, action items and deadlines.
-- Filtered analytics plus database-derived CSV and PDF exports.
-- Administrative user, SLA, threshold and integration-adapter configuration with audit events.
-- Idempotent deterministic seed: 100 institutions, 1,000 coherent complaints, 4 bureaus, role-specific officials, lifecycle history and computed overlaps.
-- Alembic migrations, Docker health checks, persistent PostgreSQL/upload/model volumes, OpenAPI, unit/integration tests and Playwright journeys.
+<p align="center">
+  <b>A unified, auditable command console that eliminates institutional blindspots, detects duplicate complaints across regulatory bureaus using hybrid AI, enforces strict SLAs, and automates multi-agency coordination.</b>
+</p>
 
-## Architecture
+[System Architecture](#-system-architecture) •
+[AI Overlap Engine](#-ai-overlap-intelligence-engine) •
+[Tech Stack](#-complete-technology-stack) •
+[Core Modules](#-core-platform-modules) •
+[Interactive Demo](#-interactive-demonstration-scenarios) •
+[Quick Start](#-quick-start--installation)
 
-```text
-SIH/
-├── frontend/                 Next.js App Router operations console
-│   ├── app/                  catch-all authenticated application routes
-│   ├── components/           dashboard, registry, cases, AI review, reports
-│   ├── lib/                  credentialed API client and CSRF handling
-│   ├── tests/                Vitest UI tests
-│   └── e2e/                  Playwright user journeys
-├── backend/
-│   ├── app/
-│   │   ├── api/              REST endpoints and exports
-│   │   ├── core/             configuration, database, authentication
-│   │   ├── integrations/     configurable external ingestion boundary
-│   │   ├── jobs/             idempotent SLA scheduler
-│   │   ├── ml/               embedding, scoring and 120-pair evaluation
-│   │   ├── models/           normalized SQLAlchemy domain
-│   │   ├── schemas/          Pydantic request contracts
-│   │   ├── services/         audit, workflow, SLA and overlap services
-│   │   └── tests/            backend workflow/integration tests
-│   └── alembic/              versioned schema migration
-├── docs/                     architecture, AI, API and demo guide
-├── docker-compose.yml
-└── .env.example
+---
+
+</div>
+
+> **⚖️ Data Notice:** AICTE supplied no official dataset, private complaint history, or internal credentials. Every seeded institution, official, and complaint is a deterministic, synthetic record clearly labeled in the database and UI. CaseSync does not claim official AICTE deployment or endorsement.
+
+---
+
+## 📌 Executive Summary & Problem Context
+
+The **All India Council for Technical Education (AICTE)** oversees thousands of technical colleges and universities across India. Public and institutional grievances are channeled through multiple distinct specialized bureaus:
+- **PGRC** (Public Grievance Redressal Cell)
+- **RB** (Regulation Bureau)
+- **AB** (Approval Bureau)
+- **SWC** (Student Welfare Cell)
+
+### The Challenge
+1. **Isolated Bureau Silos**: Multiple bureaus often independently investigate duplicate, paraphrased, or related grievances filed against the same college by different stakeholders (students, faculty, parents).
+2. **Administrative Duplication & Inconsistent Decisions**: Bureaus waste valuable investigator hours and risk reaching conflicting conclusions on related matters.
+3. **Escalation Gaps & SLA Breaches**: Grievances stall without real-time cross-departmental visibility and automated escalation.
+4. **Lack of Canonical Institution Intelligence**: Varied spellings, aliases, or unverified permanent IDs make it difficult to aggregate historical track records.
+
+### The Solution: CaseSync
+**AICTE CaseSync** acts as an intelligent operational nervous system. It canonicalizes institutional identities, computes 384-dimensional dense semantic embeddings with **Sentence Transformers (`all-MiniLM-L6-v2`)**, calculates transparent hybrid overlap scores, alerts officers in real-time, facilitates joint cross-bureau coordination rooms, and enforces automated, auditable SLA lifecycles.
+
+---
+
+## 🏛️ System Architecture
+
+![System Architecture](docs/assets/system_architecture.png)
+
+CaseSync is built upon a decoupled, secure, and production-ready micro-monolith architecture designed for high throughput, auditable data persistence, and zero cloud data leaks.
+
+### Architectural Flowchart
+
+```mermaid
+flowchart TB
+    subgraph Client_Layer["🖥️ Presentation Layer (Next.js 14 App Router)"]
+        UI_Dash["Executive Command Dashboard"]
+        UI_Case["Case Registration & Management"]
+        UI_AI["AI Overlap Studio & Side-by-Side Review"]
+        UI_Coord["Cross-Bureau Coordination Center"]
+        UI_Audit["Compliance & Audit Logs"]
+    end
+
+    subgraph Security_Perimeter["🛡️ Security Perimeter & Gateway"]
+        Auth_MW["HttpOnly Cookie JWT + CSRF Protection"]
+        RBAC_MW["Server-side Role-Based Scoping (5 Roles)"]
+        Rate_Limit["Lockout Defense & Rate Limiter"]
+    end
+
+    subgraph Backend_Layer["⚡ Backend Services (FastAPI / Python 3.12)"]
+        API_GW["FastAPI REST API Routing"]
+        subgraph Domain_Services["Core Domain Engines"]
+            Workflow_Svc["Workflow State Engine\n(Finite State Machine)"]
+            Audit_Svc["Immutable Audit Logger"]
+            SLA_Svc["Idempotent SLA Job Scheduler"]
+            Coord_Svc["Coordination Room Orchestrator"]
+        end
+        subgraph ML_Subsystem["Hybrid Intelligence Subsystem"]
+            MiniLM_Infer["Local MiniLM-L6-v2 Embedder\n(CPU PyTorch / 384-dim)"]
+            Hybrid_Scorer["Explainable Hybrid Scorer\n(Semantic + Bureau Rules)"]
+            Fingerprint_Svc["Text Fingerprint & Auto-Invalidation"]
+        end
+    end
+
+    subgraph Storage_Layer["💾 Data & Document Storage"]
+        DB[(PostgreSQL 16 + pgvector)]
+        HNSW_Idx["HNSW Cosine Index\n(384-Dimensional Vectors)"]
+        Attach_Store["Encrypted Private Vault\n(Attachments & Evidence)"]
+    end
+
+    %% Connections
+    UI_Dash & UI_Case & UI_AI & UI_Coord & UI_Audit -->|HTTPS / Credentialed API Requests| Security_Perimeter
+    Security_Perimeter --> API_GW
+    API_GW --> Domain_Services
+    API_GW --> ML_Subsystem
+    Workflow_Svc & Audit_Svc & SLA_Svc & Coord_Svc --> DB
+    ML_Subsystem --> HNSW_Idx
+    API_GW --> Attach_Store
 ```
 
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [AI_ENGINE.md](docs/AI_ENGINE.md), [API.md](docs/API.md), [DEMO_GUIDE.md](docs/DEMO_GUIDE.md), the [complete prototype walkthrough](docs/COMPLETE_DEMO_WALKTHROUGH.md), and the [three-minute SIH presentation script](docs/SIH_3_MINUTE_DEMO.md).
+### Architectural Highlights
+- **Zero Cloud Data Egress**: All NLP embeddings run locally via CPU-optimized PyTorch. Complaint text and sensitive investigator notes never leave the local boundary.
+- **Transactional Integrity**: Material case transitions, cross-bureau transfers, and audit logs execute within unified database transactions.
+- **Graceful AI Degradation**: If PyTorch or model weights are missing, CaseSync automatically activates a deterministic `feature-hash-fallback` mode so case management workflows never crash.
 
-## Product tour
+---
 
-| Workspace | Purpose | Backing behavior |
+## 🧠 AI Overlap Intelligence Engine
+
+![AI Overlap Intelligence](docs/assets/ai_overlap_detection.png)
+
+CaseSync features a purpose-built, explainable overlap engine combining transformer-based deep semantic text comparison with deterministic administrative heuristic signals.
+
+### 1. Hybrid Scoring Formula
+Rather than trusting opaque neural network outputs as legal decisions, CaseSync balances NLP semantics with regulatory reality:
+
+$$\text{Final Overlap Score} = w_s \cdot S_{\text{semantic}} + w_i \cdot I_{\text{canonical}} + w_c \cdot C_{\text{category}} + w_b \cdot B_{\text{bureau}} + w_a \cdot A_{\text{active}}$$
+
+| Feature | Weight ($w$) | Description |
+|---|:---:|---|
+| **Semantic Similarity** ($S_{\text{semantic}}$) | **62%** | Cosine similarity of 384-dimensional dense vectors generated by `all-MiniLM-L6-v2`. |
+| **Canonical Institution** ($I_{\text{canonical}}$) | **18%** | Verification of identical canonical college ID (resolving aliases & typos). |
+| **Category Overlap** ($C_{\text{category}}$) | **8%** | Shared complaint domain (e.g., fee extortion, faculty irregularities, infrastructure fraud). |
+| **Cross-Bureau Ownership** ($B_{\text{bureau}}$) | **7%** | Presence of complaints across disparate bureau jurisdictions. |
+| **Concurrent Active State** ($A_{\text{active}}$) | **5%** | Both cases are currently pending, under process, or escalated. |
+
+### 2. Decision Classifications
+- **`likely_duplicate` ($\ge 0.82$)**: Almost identical issues or paraphrased grievances. Alerts officers to avoid split investigations.
+- **`cross_bureau_related` ($0.55 - 0.81$)**: Correlated misconduct indicating systemic issues at an institution across different mandates.
+- **`shared_institution_activity` ($0.42 - 0.54$)**: Advisory signal that an institution has multiple concurrent complaints without claiming subject matter duplication.
+
+### 3. Human-in-the-Loop & Fingerprint Invalidation
+- **Transparent Evidence**: Side-by-side keyword overlap, sentence alignment, and confidence scores are presented directly to officers.
+- **Official Actions**: Case Officers can **Confirm Overlap**, **Reject**, or mark as **Unrelated**.
+- **Cryptographic Fingerprinting**: Decisions are tied to SHA-256 hashes of both complaint texts. If either complaint is materially amended, the suppression state is invalidated and re-evaluated.
+
+---
+
+## 🛠️ Complete Technology Stack
+
+| Layer | Technology | Purpose & Implementation |
 |---|---|---|
-| Overview | Command dashboard, action centre, KPI cards, trend charts, bureau workload and urgent cases | Aggregated from the current complaint, institution, overlap and SLA records |
-| Interactive Demo | Guided, repeatable proof of overlap detection, false-positive control and SLA escalation | Creates isolated synthetic records through the same backend services used by the normal UI |
-| Institutions | Canonical registry, aliases, filters, duplicate prevention and institution-level intelligence | Searchable SQL records with CSV intake and data provenance |
-| Complaints | Registration, assignment, remarks, transfer, escalation, disposal, reopening, attachments and links | Server-authorized lifecycle transitions with immutable action history |
-| Overlap Intelligence | Ranked cross-bureau findings, side-by-side evidence, human review and coordination initiation | Hybrid MiniLM plus deterministic administrative signals; no hardcoded match outcomes |
-| Coordination Center | Lead bureau, participants, owner, target date and accountable action items | Persistent cross-bureau records created only after an explicit workflow action |
-| My Work Queue | Bureau- and officer-scoped operational work | Derived from assignments, role scope, deadlines and unresolved actions |
-| Alerts & Notifications | Overlap, transfer, coordination and SLA signals | Database-backed, recipient-scoped and idempotently generated |
-| Reports & Analytics | Filters, status/category/bureau analysis, CSV export and PDF reporting | Calculated from stored records; empty date filters are omitted from API requests |
-| Audit Trail | Actor, event, entity and timestamp evidence | Append-only operational audit events |
-| Administration | Users, roles, bureau membership, SLA policies, AI thresholds and adapters | Restricted to authorized administrative roles |
+| **Frontend Framework** | **Next.js 14** (App Router) | High-performance React framework with server-side rendered entry and client-side dynamic views. |
+| **Language & Types** | **TypeScript 5.x** | End-to-end typed contracts between API schemas and frontend components. |
+| **Styling & Design** | **Tailwind CSS + Lucide Icons** | Custom high-density enterprise console with accessible color scales and dark mode aesthetics. |
+| **Backend Framework** | **FastAPI** (Python 3.12) | High-speed asynchronous Python REST API with automatic OpenAPI documentation. |
+| **Database ORM** | **SQLAlchemy 2.0** | Fully typed mapped entities, explicit session handling, and transactional consistency. |
+| **Database & Vectors** | **PostgreSQL 16 + pgvector** | Production relational storage with native 384-dim HNSW vector cosine indexing. |
+| **Dev Database** | **SQLite 3** (Dialect-aware) | Frictionless, zero-install local Windows development mode with JSON vector simulation. |
+| **Database Migrations** | **Alembic** | Version-controlled, reproducible schema migrations and rollback capabilities. |
+| **AI / NLP Model** | **Sentence Transformers (MiniLM-L6-v2)** | 384-dimensional dense text representations; CPU-optimized, offline-cached inference. |
+| **Security & Auth** | **Bcrypt + JWT + Double CSRF** | HttpOnly SameSite cookies, bcrypt cost-factor 12, CSRF token header validation, and brute-force lockout. |
+| **Job Scheduling** | **Python Asyncio / Scheduler** | Idempotent background scanner evaluating SLAs, deadlines, and notifications every hour. |
+| **Testing Suites** | **Pytest + Vitest + Playwright** | Full-stack unit tests, ML threshold sweeps, and automated browser E2E user journeys. |
+| **Containerization** | **Docker & Docker Compose** | Multi-container setup with healthchecks, persistent volumes, and isolated networking. |
 
-All application routes are served by the optional catch-all Next.js page, so `/institutions`, `/complaints`, `/demo`, `/overlaps`, `/coordination`, `/reports` and detail pages work both through sidebar navigation and direct browser loads.
+---
 
-## Interactive demonstration scenarios
-
-The Demo Center is intentionally deterministic at the input level so a presentation is repeatable, while every output is produced by real application services and current database state.
-
-1. **AI detects duplicate investigations** — registers a canonical synthetic institution, receives paraphrased complaints in PGRC and the Regulation Bureau, runs actual MiniLM inference, displays explainable evidence, records a separate human decision, and creates accountable coordination.
-2. **Same institution, different complaints** — proves that sharing an institution does not automatically make two cases duplicates; unrelated subject matter can be reviewed and suppressed.
-3. **SLA violation and escalation** — shows configured deadlines, an overdue transition, recipient notifications, escalation and the updated lifecycle/audit evidence.
-
-The UI distinguishes model classification, ranking score, human review state and administrative action. The overlap score is not presented as a probability or autonomous legal decision.
-
-## Complaint and overlap lifecycle
+## 🧩 Core Platform Modules
 
 ```text
-Complaint received
-  -> canonical institution/category resolution
-  -> bureau assignment and SLA calculation
-  -> embedding plus deterministic candidate comparison
-  -> explainable overlap finding
-  -> authorized human review
-  -> optional case link and cross-bureau coordination
-  -> action ownership, notifications and audit evidence
-  -> disposal or reopening
+SIH-CaseSync/
+├── frontend/                     # Next.js App Router Operations Console
+│   ├── app/                      # Dynamic catch-all application routes & layout
+│   ├── components/               # Enterprise Console, Overlap Studio, Demo Center
+│   │   ├── casesync-app.tsx      # Main operational console & navigation
+│   │   ├── demo-center.tsx       # Interactive proof scenarios & state simulator
+│   │   └── enhancements.tsx      # Analytical visualizations, tables, & filters
+│   ├── lib/                      # Secure API client, CSRF interceptor, types
+│   └── e2e/                      # Playwright E2E scenario test journeys
+├── backend/                      # FastAPI Python Application
+│   ├── app/
+│   │   ├── api/                  # REST endpoints (auth, cases, overlaps, reports)
+│   │   ├── core/                 # Config, DB connection, JWT/RBAC security
+│   │   ├── ml/                   # MiniLM-L6-v2 embedding & hybrid overlap engine
+│   │   ├── models/               # SQLAlchemy domain entities & constraints
+│   │   ├── schemas/              # Pydantic validation contracts
+│   │   ├── services/             # Finite workflow, SLA escalation, coordination
+│   │   └── seed.py               # Deterministic seed generator (100 orgs, 1,000 cases)
+│   └── alembic/                  # Versioned database migrations
+└── docs/                         # Architecture, AI Engine specs, and demo scripts
 ```
 
-Candidate generation is constrained by canonical institution and lifecycle relevance. The engine then combines semantic similarity with transparent rule features such as shared institution, related category, cross-bureau ownership and active status. Review decisions persist independently of the computed classification, and text fingerprints allow stale decisions to be invalidated when complaint content materially changes.
+### Module Highlights
 
-## Fastest start on Windows 11 without Docker
+| Module | Core Responsibility |
+|---|---|
+| **Overview & Action Hub** | Real-time bureau health, urgent action items, SLA countdown timers, and caseload volume charts. |
+| **Interactive Demo Center** | Deterministic showcase center with 3 scripted scenarios proving AI accuracy and workflow transitions. |
+| **Canonical Institution Registry** | Searchable database of 100+ colleges with AICTE Permanent IDs, aliases, accreditation status, and CSV intake. |
+| **Complaint Lifecycle Manager** | End-to-end case processing: Intake $\rightarrow$ Assignment $\rightarrow$ Transfer $\rightarrow$ Escalation $\rightarrow$ Disposal $\rightarrow$ Reopening. |
+| **AI Overlap Studio** | Interactive ranked review table with deep similarity scores, evidence breakdown, and side-by-side textdiff. |
+| **Coordination Center** | Joint taskforces for cross-bureau cases: multi-bureau participants, accountable task items, and shared deadlines. |
+| **My Work Queue** | Personalized, bureau-scoped action lists prioritizing impending SLA breaches and pending reviews. |
+| **Audit & Governance** | Append-only audit records logging the actor, timestamp, IP, entity ID, and exact state transition diff. |
+| **Reports & Export** | Dynamic aggregated analytics with one-click export to filtered CSV and standardized executive PDF reports. |
 
-### Prerequisites
+---
 
-- Windows 11 with PowerShell 5.1 or newer.
-- 64-bit Python 3.12. Python 3.13 is not used by the native launcher because native scientific packages can be unstable with that interpreter combination.
-- Node.js 20 or newer with `npm`.
-- Roughly 3 GB of free space for Python packages, frontend dependencies and the MiniLM model cache.
+## 🎬 Interactive Demonstration Scenarios
 
-### First-time preparation
+CaseSync includes a built-in **Interactive Demo Center** located at `/demo`. Each scenario is deterministic at input to ensure repeatability for evaluators, while executed by live backend services:
 
-Run these commands from the repository root:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Officer as Bureau Officer (PGRC)
+    participant Engine as CaseSync AI Overlap Engine
+    actor Head as Bureau Head (Regulation)
+    participant Coord as Joint Coordination Center
+
+    Note over Officer,Head: Scenario 1: Cross-Bureau Duplicate Detection
+    Officer->>Engine: Registers Case A: "Capitation fee extortion at ABC Institute"
+    Head->>Engine: Registers Case B: "Illegal admission donation demands at ABC College"
+    Engine->>Engine: Computes MiniLM Embeddings & Hybrid Heuristics
+    Engine-->>Officer: 🚨 Overlap Alert Generated (Confidence: 89% - Likely Duplicate)
+    Officer->>Officer: Inspects Side-by-Side Sentence Alignment & Rule Evidence
+    Officer->>Engine: Confirms Overlap & Requests Joint Investigation
+    Engine->>Coord: Creates Cross-Bureau Coordination Room (#CR-2026-01)
+    Coord-->>Officer: Lead Assigned: Regulation Bureau
+    Coord-->>Head: Co-Investigator Assigned: PGRC Officer
+```
+
+### Scripted Scenarios:
+1. **AI Detects Duplicate Investigations**:
+   - Paraphrased complaints filed across PGRC and Regulation Bureau for the same college.
+   - Real MiniLM embedding inference flags an 89% overlap; officers inspect side-by-side evidence and spawn a joint coordination workspace.
+2. **Same Institution, Different Complaints (False-Positive Control)**:
+   - Proves that sharing an institution does not trigger false alarms. A complaint regarding *mess food hygiene* and another regarding *unapproved course additions* are recognized as distinct and suppressed without administrative disruption.
+3. **SLA Breach & Automatic Escalation**:
+   - Demonstrates a critical grievance exceeding its 7-day resolution window. Case status shifts from `Under Process` $\rightarrow$ `Escalated`, notifying the Central Administrator and appending to the audit trail.
+
+---
+
+## ⚡ Quick Start & Installation
+
+### Option 1: Run with Docker (Recommended)
+
+Requires **Docker Desktop** with Compose support:
 
 ```powershell
+# 1. Clone repository
+git clone https://github.com/Vatsal212005/SIH-CaseSync.git
+cd SIH-CaseSync
+
+# 2. Configure environment
+Copy-Item .env.example .env
+
+# 3. Build and launch containers
+docker compose up --build
+```
+
+- **Operations Console**: [http://localhost:3000](http://localhost:3000)
+- **FastAPI OpenAPI Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **AI Engine Health Diagnostic**: [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
+
+---
+
+### Option 2: Native Windows 11 Local Setup
+
+Requires **Python 3.12**, **Node.js 20+**, and **PowerShell 5.1+**:
+
+```powershell
+# 1. Setup Backend Virtual Environment
 py -3.12 -m venv backend\.venv
 backend\.venv\Scripts\python.exe -m pip install --upgrade pip
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 
+# 2. Setup Frontend Dependencies
 Push-Location frontend
 npm ci
 Pop-Location
-```
 
-Download the public MiniLM model once while online. The normal launcher subsequently forces offline, CPU-only inference and reuses this cache:
-
-```powershell
+# 3. Cache the MiniLM Transformer Model (Offline Execution)
 backend\.venv\Scripts\python.exe -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
-```
 
-Start the complete application and open it in Brave:
-
-```powershell
+# 4. Launch Full Stack with Diagnostics
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-dev.ps1 -OpenBrave
 ```
 
-The launcher:
-
-- validates that `backend\.venv` uses Python 3.12;
-- selects SQLite without altering the PostgreSQL/Docker configuration;
-- applies Alembic migrations and runs the idempotent deterministic seed;
-- enables demo accounts and the clearly labeled synthetic dataset;
-- configures CPU-only, offline Sentence Transformers inference;
-- starts FastAPI on `http://localhost:8000` and Next.js on `http://localhost:3000`;
-- waits until both services are healthy, avoids duplicate processes and records exact process identities;
-- writes timestamped diagnostics under `.runlogs`.
-
-Stop only the processes recorded for this CaseSync checkout:
-
+To stop all recorded background processes cleanly:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stop-dev.ps1
 ```
 
-Repeated starts reuse healthy CaseSync listeners. If either port is owned by an unrelated program, the launcher reports the PID and leaves it untouched.
+---
 
-### Verified native configuration
+## 🔑 Demonstration Accounts
 
-The native Windows workflow has been exercised with Python 3.12.7, CPU-only PyTorch, SQLite and `sentence-transformers/all-MiniLM-L6-v2`. Verification covered:
+When `DEMO_MODE=true` is enabled, the database is deterministically seeded with pre-configured accounts:
 
-- database migration and idempotent synthetic seeding;
-- authenticated dashboard, institution and complaint APIs;
-- complaint registration and case-detail workflows;
-- real 384-dimensional MiniLM inference and computed overlap findings;
-- overlap review, transfers and cross-bureau coordination;
-- reports, analytics, notifications and SLA scanning;
-- a controlled stop/start cycle with SQLite data preservation;
-- the complete Playwright end-to-end suite, including all three interactive demonstration journeys and refresh recovery.
+| Role | Email Address | Default Password | Scoped Permissions |
+|---|---|:---:|---|
+| **System Administrator** | `admin@casesync.demo` | `CaseSync@2026` | Full platform settings, thresholds, user management. |
+| **Central Administrator** | `central@casesync.demo` | `CaseSync@2026` | All-bureau oversight, master reassignments, global analytics. |
+| **Bureau Head (RB)** | `head.rb@casesync.demo` | `CaseSync@2026` | Regulation Bureau queue, officer assignment, transfers. |
+| **Case Officer (RB)** | `officer1.rb@casesync.demo` | `CaseSync@2026` | Assigned investigation workflows, remarks, disposals. |
+| **Auditor** | `auditor@casesync.demo` | `CaseSync@2026` | Strictly read-only access to all complaints & immutable logs. |
 
-## Run with Docker (recommended)
+*(Equivalent Bureau Head and Officer accounts exist for `pgrc`, `ab`, and `swc`)*
 
-Prerequisites: Docker Desktop with Compose and roughly 6 GB of free disk space for images and the local embedding model.
+---
+
+## 📊 Comprehensive Database Schema
+
+CaseSync enforces referential integrity through SQLAlchemy 2.0 and Alembic migrations:
+
+```mermaid
+erDiagram
+    BUREAUS ||--o{ USERS : "employs"
+    BUREAUS ||--o{ COMPLAINTS : "manages"
+    INSTITUTIONS ||--o{ INSTITUTION_ALIASES : "known_as"
+    INSTITUTIONS ||--o{ COMPLAINTS : "subject_of"
+    USERS ||--o{ COMPLAINT_ACTIONS : "performs"
+    USERS ||--o{ AUDIT_EVENTS : "triggers"
+    USERS ||--o{ COORDINATION_PARTICIPANTS : "joins"
+    
+    COMPLAINTS ||--o{ COMPLAINT_ACTIONS : "lifecycle_events"
+    COMPLAINTS ||--o{ ATTACHMENTS : "contains"
+    COMPLAINTS ||--|| COMPLAINT_EMBEDDINGS : "vectorized_as"
+    COMPLAINTS ||--o{ OVERLAP_FINDINGS : "evaluated_in"
+    COMPLAINTS ||--o{ COORDINATION_ITEMS : "addressed_in"
+
+    COMPLAINTS {
+        string id PK
+        string complaint_number UK
+        string title
+        text description
+        string status
+        string priority
+        string bureau_id FK
+        string institution_id FK
+        datetime sla_deadline
+        datetime created_at
+    }
+
+    COMPLAINT_EMBEDDINGS {
+        string id PK
+        string complaint_id FK
+        vector_384 embedding
+        string text_hash
+        datetime updated_at
+    }
+
+    OVERLAP_FINDINGS {
+        string id PK
+        string source_case_id FK
+        string target_case_id FK
+        float similarity_score
+        float hybrid_score
+        string classification
+        string review_state
+        string fingerprint UK
+    }
+
+    COORDINATION_ITEMS {
+        string id PK
+        string title
+        string lead_bureau_id FK
+        string status
+        datetime target_date
+    }
+```
+
+---
+
+## 🧪 Testing & Verification Suite
+
+CaseSync includes a comprehensive test suite across every tier of the application:
 
 ```powershell
-Copy-Item .env.example .env
-# Replace SECRET_KEY in .env with a long random value.
-docker compose up --build
-```
-
-Open:
-
-- Operations console: `http://localhost:3000`
-- API docs: `http://localhost:8000/docs`
-- Health/AI diagnostic: `http://localhost:8000/api/v1/health`
-
-Startup waits for PostgreSQL, applies Alembic migrations, and runs the idempotent seed command. First model use downloads the open-source model into the persistent `model_cache` volume. Core case workflows remain available if that download fails, while the health/settings response clearly identifies the fallback backend.
-
-Stop without deleting persistent data:
-
-```powershell
-docker compose down
-```
-
-## Local development
-
-Backend:
-
-```powershell
-cd backend
-python -m pip install -r requirements.txt
-$env:DATABASE_URL = "sqlite:///./casesync.db"  # local lightweight option
-alembic upgrade head
-python -m app.seed
-uvicorn app.main:app --reload --port 8000
-```
-
-Frontend, in a second terminal:
-
-```powershell
-cd frontend
-npm install
-$env:NEXT_PUBLIC_API_URL = "http://localhost:8000/api/v1"
-npm run dev
-```
-
-For normal Windows use, prefer `start-dev.ps1`; the manual commands above are useful when debugging either service interactively.
-
-PostgreSQL plus pgvector is the deployment target. SQLite exists only for lightweight local tests; `VectorType` switches to a native 384-dimensional pgvector column and HNSW cosine index under PostgreSQL.
-
-## Demonstration accounts
-
-Demo accounts are created only when `DEMO_MODE=true`. The default development password comes from `DEMO_PASSWORD`.
-
-| Role | Email | Default development password |
-|---|---|---|
-| System Administrator | `admin@casesync.demo` | `CaseSync@2026` |
-| Central Administrator | `central@casesync.demo` | `CaseSync@2026` |
-| Auditor | `auditor@casesync.demo` | `CaseSync@2026` |
-| Bureau Head | `head.rb@casesync.demo` | `CaseSync@2026` |
-| Case Officer | `officer1.rb@casesync.demo` | `CaseSync@2026` |
-
-Equivalent bureau-head and officer accounts exist for `pgrc`, `ab` and `swc`. Never enable demo seeding or reuse this password in a production environment.
-
-## CSV ingestion
-
-Institution CSV required columns:
-
-```text
-permanent_id,name,address,city,state,region,postal_code,institution_type,approval_status
-```
-
-Optional column: `contact_email`.
-
-Complaint CSV required columns:
-
-```text
-institution_permanent_id,title,description,category,priority,source,stakeholder_type,date_received,bureau_code
-```
-
-Dates use `YYYY-MM-DD`; priority uses `low`, `medium`, `high`, or `critical`. Imports resolve existing canonical IDs, validate each row, prevent duplicate institutions, persist an import job and return row-numbered errors. Imported records are marked non-synthetic. `backend/app/integrations` defines the adapter protocol for a future authorized API or file-transfer source.
-
-## Verification commands
-
-```powershell
+# 1. Backend Linting & Unit / Integration Tests
 cd backend
 python -m ruff check app
 python -m pytest --cov=app
+
+# 2. Evaluate ML Overlap Engine with 120-Pair Sweep
 python -m app.ml.evaluate --sweep
 
+# 3. Frontend Unit & Type Tests
 cd ../frontend
-npm test
 npm run lint
 npm run typecheck
-npm run build
+npm test
+
+# 4. Playwright End-to-End User Journeys
 npx playwright install chromium
 npm run test:e2e
 ```
 
-Docker integration verification:
+### 120-Pair Evaluation Benchmark Results
+As recorded in [`docs/evaluation-results.json`](file:///c:/Users/Admin/Pictures/casesync/docs/evaluation-results.json), evaluating `sentence-transformers/all-MiniLM-L6-v2` at the operational threshold $0.55$:
+- **Precision**: `1.0000` (Zero false positives in testing matrix)
+- **Recall**: `0.8667`
+- **F1 Score**: `0.9286`
+- **Inference Speed**: `< 45ms` per complaint pair on standard CPU.
 
-```powershell
-docker compose config
-docker compose up --build -d
-docker compose ps
-Invoke-RestMethod http://localhost:8000/api/v1/health
-```
+---
 
-## Environment
+## 🔒 Security & Defensive Engineering
 
-All options are documented in `.env.example`. In production, use a high-entropy `SECRET_KEY`, set `DEMO_MODE=false`, provide a managed PostgreSQL/pgvector database, use TLS at the ingress, restrict `CORS_ORIGINS`, scan uploads, back up database/storage volumes, and run the idempotent SLA job from a single scheduler or job runner.
+1. **HttpOnly & SameSite Cookie Session Management**: Access tokens cannot be harvested via cross-site scripting (XSS).
+2. **Strict CSRF Double-Submit Protection**: Mutations require both the authenticated session and a matching cryptographic `X-CSRF-Token` header.
+3. **Server-Side RBAC Scoping**: Bureau heads and officers cannot query or mutate cases outside their assigned bureau ID at the database level.
+4. **Brute-Force Lockout Defense**: 5 consecutive failed login attempts trigger an automated account lockout window.
+5. **Private Attachment Vault**: Uploaded PDFs and images are SHA-256 hashed, stored outside public web roots with sanitized filenames, and streamed only after case-scope verification.
+6. **Masked Structured Logs**: Passwords, cryptographic tokens, and raw complaint narrative texts are excluded from stdout/JSON log streams.
 
-## Troubleshooting
+---
 
-- **Model unavailable:** inspect `/api/v1/health`. Workflows continue using identity/rule matching and a named feature-hash fallback; no semantic score is presented as transformer-derived.
-- **No demo records:** ensure `DEMO_MODE=true`, then run `python -m app.seed`. The command is idempotent by seed version.
-- **Browser cannot authenticate:** confirm `CORS_ORIGINS` exactly matches the frontend origin and both services use the same scheme/host family.
-- **Migration failure:** verify the database health check and that the database user can create the `vector` extension.
-- **CSV errors:** the response contains source line numbers and validation messages; correct those rows and re-import.
+## 📄 License & Attribution
 
-## Official integration status
-
-No official government infrastructure is required or simulated as connected. Authorized AICTE integration would require data-owner approval, documented field mappings, credentials, network allow-listing, retention rules and a security assessment. The configured adapter boundary supports adding that source without rebuilding complaint, overlap, coordination or reporting workflows.
-
+Developed for **Smart India Hackathon (SIH)** under Problem Statement **SIH26264**.  
+Built with ❤️ by Team CaseSync.
