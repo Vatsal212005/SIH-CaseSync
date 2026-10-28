@@ -16,7 +16,7 @@ test("enhanced primary views emit no critical browser errors", async ({page}) =>
   });
   await login(page);
   await page.locator(".nav").getByRole("button", {name: "Interactive Demo"}).click();
-  await expect(page.getByText("See CaseSync solve the coordination problem")).toBeVisible();
+  await expect(page.getByText("Watch CaseSync reason, decide and coordinate")).toBeVisible();
   await page.locator(".nav").getByRole("button", {name: "Reports & Analytics"}).click();
   await expect(page.getByRole("button", {name: /CSV/})).toBeEnabled();
   expect(errors).toEqual([]);
@@ -36,26 +36,114 @@ test("guided tour targets working navigation and persists completion", async ({p
   expect(await page.evaluate(() => localStorage.getItem("casesync-tour-complete"))).toBe("true");
 });
 
-test("interactive demo runs the real same-institution comparison workflow", async ({page}) => {
+test("interactive demo shows computed restraint for different complaints", async ({page}) => {
   test.setTimeout(180_000);
   await login(page);
   await page.locator(".nav").getByRole("button", {name: "Interactive Demo"}).click();
   const scenario = page.locator(".scenario-card").filter({hasText: "Same institution, different complaints"});
-  await scenario.getByRole("button", {name: "Start demo"}).click();
-  await expect(page.getByText("Live services")).toBeVisible();
+  await scenario.getByRole("button", {name: "Start isolated demo"}).click();
+  await expect(page.getByText("Live system state")).toBeVisible();
 
-  for (let step = 0; step < 4; step += 1) {
-    const run = page.getByRole("button", {name: /^Run:/});
+  for (const action of [
+    "Register canonical institution",
+    "Receive fee complaint",
+    "Receive infrastructure complaint",
+    "Run AI distinction analysis",
+    "Explain the computed outcome",
+  ]) {
+    const run = page.getByRole("button", {name: `Run: ${action}`});
     await expect(run).toBeEnabled({timeout: 90_000});
-    const eventsBefore = await page.locator(".demo-event").count();
     await run.click();
-    await expect(page.locator(".demo-event")).toHaveCount(eventsBefore + 1, {timeout: 90_000});
   }
 
-  await expect(page.getByText("Scenario completed")).toBeVisible({timeout: 90_000});
-  await expect(page.getByText("Same-institution evaluation completed")).toBeVisible();
-  await expect(page.getByText("The engine distinguishes shared institutional activity from semantic duplication.")).toBeVisible();
-  expect(await page.locator(".live-records button").count()).toBeGreaterThanOrEqual(2);
+  await expect(page.getByText("Same institution did not become an automatic duplicate")).toBeVisible({timeout: 90_000});
+  await expect(page.getByText("Evidence evaluated; no automatic coordination")).toBeVisible();
+  expect(await page.locator(".demo-live-state button").count()).toBeGreaterThanOrEqual(6);
+});
+
+test("duplicate investigation demo requires human review before coordination", async ({page}) => {
+  test.setTimeout(240_000);
+  await login(page);
+  await page.locator(".nav").getByRole("button", {name: "Interactive Demo"}).click();
+  const scenario = page.locator(".scenario-card").filter({hasText: "AI detects duplicate investigations"});
+  await scenario.getByRole("button", {name: "Start isolated demo"}).click();
+
+  for (const action of [
+    "Register canonical institution",
+    "Receive PGRC complaint",
+    "Receive Regulation Bureau complaint",
+    "Run AI overlap analysis",
+  ]) {
+    const run = page.getByRole("button", {name: `Run: ${action}`});
+    await expect(run).toBeEnabled({timeout: 90_000});
+    await run.click();
+  }
+
+  await expect(page.getByText("The AI has proposed a candidate relationship. An authorized official must decide.")).toBeVisible({timeout: 90_000});
+  await expect(page.getByText("Semantic similarity", {exact: true}).first()).toBeVisible();
+  await page.getByRole("button", {name: "Record explicit human decision"}).click();
+  await expect(page.getByRole("button", {name: "Create accountable coordination"})).toBeVisible({timeout: 30_000});
+  await page.getByRole("button", {name: "Create accountable coordination"}).click();
+  await expect(page.getByText("Evidence reviewed and coordination established")).toBeVisible({timeout: 30_000});
+  await expect(page.getByRole("button", {name: "View Coordination Center"})).toBeVisible();
+});
+
+test("SLA demo persists assignment, notification evidence and escalation", async ({page}) => {
+  test.setTimeout(180_000);
+  await login(page);
+  await page.locator(".nav").getByRole("button", {name: "Interactive Demo"}).click();
+  const scenario = page.locator(".scenario-card").filter({hasText: "SLA violation and escalation"});
+  await scenario.getByRole("button", {name: "Start isolated demo"}).click();
+
+  for (const action of [
+    "Register canonical institution",
+    "Receive deadline-sensitive complaint",
+    "Assign an accountable officer",
+    "Run SLA monitoring",
+    "Escalate the complaint",
+  ]) {
+    const run = page.getByRole("button", {name: `Run: ${action}`});
+    await expect(run).toBeEnabled({timeout: 90_000});
+    await run.click();
+  }
+
+  await expect(page.getByText("Deadline risk became accountable action")).toBeVisible({timeout: 30_000});
+  await expect(page.getByText("Status: Escalated")).toBeVisible();
+  await expect(page.getByRole("button", {name: "View Notifications"})).toBeVisible();
+});
+
+test("active demo session recovers after refresh", async ({page}) => {
+  await login(page);
+  await page.locator(".nav").getByRole("button", {name: "Interactive Demo"}).click();
+  const scenario = page.locator(".scenario-card").filter({hasText: "Same institution, different complaints"});
+  await scenario.getByRole("button", {name: "Start isolated demo"}).click();
+  await page.getByRole("button", {name: "Run: Register canonical institution"}).click();
+  await page.reload();
+  await page.getByRole("button", {name: /Continue current session/}).click();
+  await page.getByRole("button", {name: /Institution registered/}).click();
+  await expect(page.getByText("Synthetic institution profile")).toBeVisible();
+});
+
+test("frontend falls back to a clearly labeled preset demo when the API is offline", async ({page}) => {
+  await page.route("**/api/v1/**", route => route.abort("connectionrefused"));
+  await page.goto("/");
+  await expect(page.getByText("OFFLINE FRONTEND PREVIEW", {exact: false})).toBeVisible({timeout: 10_000});
+  await expect(page.getByText("Offline preset preview", {exact: true})).toBeVisible();
+
+  const scenario = page.locator(".scenario-card").filter({hasText: "AI detects duplicate investigations"});
+  await scenario.getByRole("button", {name: "Start preset demo"}).click();
+  for (const action of [
+    "Register canonical institution",
+    "Receive PGRC complaint",
+    "Receive Regulation Bureau complaint",
+    "Run AI overlap analysis",
+  ]) {
+    await page.getByRole("button", {name: `Run: ${action}`}).click();
+  }
+  await page.getByRole("button", {name: "Record explicit human decision"}).click();
+  await page.getByRole("button", {name: "Create accountable coordination"}).click();
+  await expect(page.getByText("Evidence reviewed and coordination established")).toBeVisible();
+  await expect(page.getByText("no backend persistence or live inference", {exact: false})).toBeVisible();
 });
 
 test("AI comparison coordinates cases and exposes their real journey", async ({page}) => {

@@ -7,15 +7,18 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import (
     Bureau,
+    AuditEvent,
     CaseStatus,
     Complaint,
     ComplaintAction,
     ComplaintCategory,
     CoordinationActionItem,
+    CoordinationComplaint,
     CoordinationParticipant,
     CoordinationRecord,
     DemoSession,
     Institution,
+    Notification,
     OverlapFinding,
     OverlapReview,
     Priority,
@@ -24,25 +27,45 @@ from app.models import (
     Role,
     User,
 )
+from app.ml.engine import MODEL_STATUS
 from app.schemas import ActionInput
 from app.services.audit import audit
 from app.services.coordination import coordinate_finding
-from app.services.overlap import detect_overlaps
+from app.services.overlap import analyze_pair, detect_overlaps
 from app.services.sla import deadline_for, run_sla_check
 from app.services.workflow import perform_action
 
 SCENARIOS = {
     "duplicate_investigations": {
         "title": "AI detects duplicate investigations",
-        "steps": ["Create synthetic institution", "Register PGRC complaint", "Register Regulation Bureau complaint and run MiniLM", "Confirm evidence and coordinate"],
+        "steps": [
+            "Register canonical institution",
+            "Receive PGRC complaint",
+            "Receive Regulation Bureau complaint",
+            "Run AI overlap analysis",
+            "Record human review",
+            "Create cross-bureau coordination",
+        ],
     },
     "different_complaints": {
         "title": "Same institution, different complaints",
-        "steps": ["Create synthetic institution", "Register fee complaint", "Register infrastructure complaint and run MiniLM", "Explain the actual classification"],
+        "steps": [
+            "Register canonical institution",
+            "Receive fee complaint",
+            "Receive infrastructure complaint",
+            "Run AI distinction analysis",
+            "Explain the computed outcome",
+        ],
     },
     "sla_escalation": {
         "title": "SLA violation and escalation",
-        "steps": ["Create synthetic institution", "Register deadline-sensitive complaint", "Assign an accountable officer", "Run SLA scan and escalate"],
+        "steps": [
+            "Register canonical institution",
+            "Receive deadline-sensitive complaint",
+            "Assign an accountable officer",
+            "Run SLA monitoring",
+            "Escalate the complaint",
+        ],
     },
 }
 
@@ -59,6 +82,18 @@ def start_session(db: Session, scenario: str, user: User) -> DemoSession:
         raise HTTPException(404, "Interactive demos are disabled")
     if scenario not in SCENARIOS:
         raise HTTPException(422, "Unknown demonstration scenario")
+    # Keep recovery unambiguous: a user may have one active studio run at a
+    # time. Starting another run archives only that user's demo sessions and
+    # never alters the synthetic records created by an earlier run.
+    now = datetime.now(timezone.utc)
+    for active in (
+        db.query(DemoSession)
+        .filter(DemoSession.created_by_id == user.id, DemoSession.status == "active")
+        .all()
+    ):
+        active.status = "archived"
+        active.archived_at = now
+        audit(db, user.id, "demo.archived", "demo_session", active.id, after={"reason": "new_session"})
     session = DemoSession(scenario=scenario, created_by_id=user.id, complaint_ids=[], result_json={"events": []})
     db.add(session)
     db.flush()
@@ -129,6 +164,10 @@ def _new_complaint(
     priority: Priority = Priority.HIGH,
     assigned_officer_id: str | None = None,
     date_received: date | None = None,
+    # Demo complaint-entry steps must stay fast and deterministic. The scenario
+    # runs embedding inference explicitly in its analysis step, where the UI can
+    # explain model warm-up and display the resulting evidence.
+    run_overlap: bool = False,
 ) -> Complaint:
     seq = (db.query(Complaint).count() or 0) + 1
     received = date_received or date.today()
@@ -162,7 +201,8 @@ def _new_complaint(
         metadata_json={"demo_session_id": session.id},
     ))
     session.complaint_ids = [*session.complaint_ids, complaint.id]
-    detect_overlaps(db, complaint)
+    if run_overlap:
+        detect_overlaps(db, complaint)
     return complaint
 
 
@@ -178,6 +218,12 @@ def _event(session: DemoSession, title: str, detail: str, **data) -> None:
     events = list(result.get("events", []))
     events.append({"step": session.current_step + 1, "title": title, "detail": detail, "at": datetime.now(timezone.utc).isoformat(), **data})
     result["events"] = events
+    session.result_json = result
+
+
+def _analysis(session: DemoSession, value: dict) -> None:
+    result = dict(session.result_json or {})
+    result["analysis"] = value
     session.result_json = result
 
 
@@ -215,38 +261,52 @@ def advance_session(db: Session, session: DemoSession, user: User, expected_step
                 db, session, user, institution, bureau=regulation, category=fee,
                 title="Institution collecting extra mandatory exam-related charges",
                 description="A differently worded submission alleges compulsory extra money was collected from candidates for examination processing beyond the institution's approved fee structure. Regulatory verification and student reimbursement are requested.",
+                run_overlap=False,
             )
-            finding = _pair_finding(db, session.complaint_ids[0], complaint.id)
+            _event(session, "Regulation Bureau complaint registered", "A second active case now exists with different wording and separate bureau ownership.", complaint_id=complaint.id)
+        elif session.current_step == 3:
+            first, second = [db.get(Complaint, complaint_id) for complaint_id in session.complaint_ids]
+            analysis = analyze_pair(db, first, second)
+            detect_overlaps(db, second)
+            finding = _pair_finding(db, session.complaint_ids[0], session.complaint_ids[1])
             session.finding_id = finding.id if finding else None
+            analysis["finding_persisted"] = finding is not None
+            analysis["finding_id"] = finding.id if finding else None
+            _analysis(session, analysis)
             _event(
                 session,
                 "MiniLM overlap evaluation completed",
                 "The real overlap engine evaluated the two descriptions; no outcome is hardcoded.",
                 finding_id=finding.id if finding else None,
-                semantic_score=finding.similarity_score if finding else None,
-                classification=finding.finding_type if finding else "no_reviewable_finding",
+                semantic_score=analysis["semantic"],
+                classification=analysis["finding_type"],
             )
-        elif session.current_step == 3:
+        elif session.current_step == 4:
             finding = db.get(OverlapFinding, session.finding_id) if session.finding_id else None
             if not finding:
                 _event(session, "No reviewable relationship found", "The live model did not produce a finding for this session.")
+            elif finding.review_state == ReviewState.PENDING:
+                raise HTTPException(409, "Record an explicit human review decision before continuing")
             else:
-                finding.review_state = ReviewState.CONFIRMED
-                finding.reviewer_id = user.id
-                finding.resolution_notes = "Confirmed during the guided synthetic SIH demonstration after human review."
-                db.add(OverlapReview(finding_id=finding.id, reviewer_id=user.id, decision=ReviewState.CONFIRMED.value, notes=finding.resolution_notes))
-                ids = sorted([finding.complaint_a_id, finding.complaint_b_id])
-                link = db.query(RelatedCaseLink).filter_by(complaint_a_id=ids[0], complaint_b_id=ids[1]).first()
-                if not link:
-                    db.add(RelatedCaseLink(complaint_a_id=ids[0], complaint_b_id=ids[1], relation_type=finding.finding_type, created_by_id=user.id, active=True, justification=finding.resolution_notes))
-                record, _ = coordinate_finding(
-                    db, finding, user,
-                    next_action="Jointly verify the fee approval record and prepare a coordinated response",
-                    remarks=finding.resolution_notes,
-                    request_key=f"demo:{session.id}:coordination",
+                review = db.query(OverlapReview).filter_by(finding_id=finding.id).order_by(OverlapReview.created_at.desc()).first()
+                _event(
+                    session,
+                    f"Human review recorded: {finding.review_state.value.replace('_', ' ')}",
+                    "The authorized review is separate from the model output and preserves the original score.",
+                    review_state=finding.review_state.value,
+                    reviewer_id=finding.reviewer_id,
+                    review_id=review.id if review else None,
                 )
-                session.coordination_id = record.id
-                _event(session, "Human review confirmed and coordination opened", "The cases are linked without merging or disposing either complaint.", coordination_id=record.id)
+                if finding.review_state != ReviewState.CONFIRMED:
+                    session.current_step = len(SCENARIOS[session.scenario]["steps"])
+                    session.status = "completed"
+        elif session.current_step == 5:
+            finding = db.get(OverlapFinding, session.finding_id)
+            record = db.query(CoordinationRecord).filter_by(source_finding_id=finding.id).first()
+            if not record:
+                raise HTTPException(409, "Create the coordination record before continuing")
+            session.coordination_id = record.id
+            _event(session, "Coordination record created", "Both complaints remain separate records and now share owned actions, participants and a due date.", coordination_id=record.id)
     elif session.scenario == "different_complaints":
         if session.current_step == 1:
             complaint = _new_complaint(
@@ -260,23 +320,31 @@ def advance_session(db: Session, session: DemoSession, user: User, expected_step
                 db, session, user, institution, bureau=approval, category=infrastructure,
                 title="Core engineering laboratories lack required equipment",
                 description="The mechanical and electrical laboratories reportedly lack calibrated instruments, safety equipment and functional workstations required for practical instruction.",
+                run_overlap=False,
             )
-            finding = _pair_finding(db, session.complaint_ids[0], complaint.id)
+            _event(session, "Infrastructure complaint registered", "A distinct allegation is owned by the Approval Bureau under the same canonical institution.", complaint_id=complaint.id)
+        elif session.current_step == 3:
+            first, second = [db.get(Complaint, complaint_id) for complaint_id in session.complaint_ids]
+            analysis = analyze_pair(db, first, second)
+            detect_overlaps(db, second)
+            finding = _pair_finding(db, session.complaint_ids[0], session.complaint_ids[1])
             session.finding_id = finding.id if finding else None
+            analysis["finding_persisted"] = finding is not None
+            analysis["finding_id"] = finding.id if finding else None
+            _analysis(session, analysis)
             _event(
                 session,
                 "Same-institution evaluation completed",
                 "The engine distinguishes shared institutional activity from semantic duplication.",
                 finding_id=finding.id if finding else None,
-                semantic_score=finding.similarity_score if finding else None,
-                classification=finding.finding_type if finding else "no_reviewable_finding",
+                semantic_score=analysis["semantic"],
+                classification=analysis["finding_type"],
             )
-        elif session.current_step == 3:
-            finding = db.get(OverlapFinding, session.finding_id) if session.finding_id else None
+        elif session.current_step == 4:
+            analysis = (session.result_json or {}).get("analysis") or {}
             explanation = "These cases share a canonical institution but concern different allegations."
-            if finding:
-                explanation += f" The actual engine classified the relationship as {finding.finding_type.replace('_', ' ')} with semantic similarity {finding.similarity_score:.0%}."
-            _event(session, "Evidence explained", explanation)
+            explanation += f" The actual engine classified the relationship as {analysis.get('finding_type', 'unavailable').replace('_', ' ')} with semantic similarity {analysis.get('semantic', 0):.0%}."
+            _event(session, "False-positive control explained", explanation, reviewable_finding=bool(analysis.get("finding_persisted")))
     else:
         if session.current_step == 1:
             received = _received_for_approaching_deadline(db, compliance.id, regulation.id)
@@ -296,11 +364,19 @@ def advance_session(db: Session, session: DemoSession, user: User, expected_step
             _event(session, "Officer assigned", f"{officer.full_name} now owns the next action.", officer_id=officer.id)
         elif session.current_step == 3:
             complaint = db.get(Complaint, session.complaint_ids[0])
+            before_ids = {row.id for row in db.query(Notification).filter_by(related_type="complaint", related_id=complaint.id).all()}
             sla_result = run_sla_check(db)
+            notifications = db.query(Notification).filter_by(related_type="complaint", related_id=complaint.id).order_by(Notification.created_at.desc()).all()
+            new_ids = [row.id for row in notifications if row.id not in before_ids]
+            _event(session, "SLA monitoring completed", "The idempotent SLA service evaluated the configured deadline and recipient rules.", notifications_generated=sla_result["generated"], notification_ids=new_ids, notifications_existing=len(notifications), complaint_id=complaint.id)
+        elif session.current_step == 4:
+            complaint = db.get(Complaint, session.complaint_ids[0])
+            previous = complaint.status.value
             perform_action(db, complaint, user, ActionInput(action="escalate", remarks="Escalated after the configured SLA warning during the synthetic demonstration.", officer_id=None, destination_bureau_id=None))
-            _event(session, "SLA scan and escalation recorded", "Persistent notifications and complaint history were updated by the real workflow services.", notifications_generated=sla_result["generated"], complaint_id=complaint.id)
+            _event(session, "Complaint escalation recorded", "The complaint status, action history and audit evidence were updated by the real workflow service.", complaint_id=complaint.id, previous_status=previous, new_status=complaint.status.value)
 
-    session.current_step += 1
+    if session.status == "active":
+        session.current_step += 1
     if session.current_step >= len(SCENARIOS[session.scenario]["steps"]):
         session.status = "completed"
     session.updated_at = datetime.now(timezone.utc)
@@ -310,10 +386,78 @@ def advance_session(db: Session, session: DemoSession, user: User, expected_step
     return session
 
 
-def session_payload(db: Session, session: DemoSession) -> dict:
-    complaints = db.query(Complaint).filter(Complaint.id.in_(session.complaint_ids or [])).all() if session.complaint_ids else []
+def _iso(value) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def session_payload(db: Session, session: DemoSession, viewer: User | None = None) -> dict:
+    complaint_ids = session.complaint_ids or []
+    rows = db.query(Complaint).filter(Complaint.id.in_(complaint_ids)).all() if complaint_ids else []
+    by_id = {row.id: row for row in rows}
+    complaints = [by_id[row_id] for row_id in complaint_ids if row_id in by_id]
+    institution = db.get(Institution, session.institution_id) if session.institution_id else None
     finding = db.get(OverlapFinding, session.finding_id) if session.finding_id else None
     coordination = db.get(CoordinationRecord, session.coordination_id) if session.coordination_id else None
+    if not coordination and finding:
+        coordination = db.query(CoordinationRecord).filter_by(source_finding_id=finding.id).first()
+    review = db.query(OverlapReview).filter_by(finding_id=finding.id).order_by(OverlapReview.created_at.desc()).first() if finding else None
+
+    relevant_ids = {session.id, *complaint_ids}
+    if session.institution_id:
+        relevant_ids.add(session.institution_id)
+    if finding:
+        relevant_ids.add(finding.id)
+    if coordination:
+        relevant_ids.add(coordination.id)
+    audits = db.query(AuditEvent).filter(AuditEvent.entity_id.in_(relevant_ids), AuditEvent.created_at >= session.created_at).order_by(AuditEvent.created_at).all()
+    notification_query = db.query(Notification).filter(Notification.created_at >= session.created_at)
+    related_ids = {*(complaint_ids or [])}
+    if finding:
+        related_ids.add(finding.id)
+    if coordination:
+        related_ids.add(coordination.id)
+    notification_query = notification_query.filter(Notification.related_id.in_(related_ids)) if related_ids else notification_query.filter(False)
+    if viewer and viewer.role not in {Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN}:
+        notification_query = notification_query.filter(Notification.recipient_id == viewer.id)
+    notifications = notification_query.order_by(Notification.created_at).all()
+
+    participant_rows = db.query(CoordinationParticipant).filter_by(coordination_id=coordination.id).all() if coordination else []
+    action_rows = db.query(CoordinationActionItem).filter_by(coordination_id=coordination.id).order_by(CoordinationActionItem.created_at).all() if coordination else []
+    linked_ids = [row.complaint_id for row in db.query(CoordinationComplaint).filter_by(coordination_id=coordination.id).all()] if coordination else []
+    owner = db.get(User, coordination.owner_id) if coordination else None
+
+    complaint_payload = []
+    for row in complaints:
+        actions = db.query(ComplaintAction).filter_by(complaint_id=row.id).order_by(ComplaintAction.created_at).all()
+        complaint_payload.append({
+            "id": row.id,
+            "complaint_no": row.complaint_no,
+            "title": row.title,
+            "description": row.description,
+            "category": {"id": row.category.id, "name": row.category.name},
+            "priority": row.priority.value,
+            "status": row.status.value,
+            "source": row.source,
+            "stakeholder_type": row.stakeholder_type,
+            "date_received": row.date_received.isoformat(),
+            "created_at": _iso(row.created_at),
+            "sla_deadline": _iso(row.sla_deadline),
+            "sla_days": (row.sla_deadline.date() - row.date_received).days if row.sla_deadline else None,
+            "days_remaining": (row.sla_deadline.date() - date.today()).days if row.sla_deadline else None,
+            "bureau": {"id": row.assigned_bureau.id, "code": row.assigned_bureau.code, "name": row.assigned_bureau.name},
+            "assigned_officer": ({"id": row.assigned_officer.id, "name": row.assigned_officer.full_name, "role": row.assigned_officer.role.value} if row.assigned_officer else None),
+            "institution": ({"id": institution.id, "name": institution.name, "permanent_id": institution.permanent_id} if institution else None),
+            "actions": [{
+                "id": action.id,
+                "type": action.action_type,
+                "actor": action.actor.full_name,
+                "from_status": action.from_status,
+                "to_status": action.to_status,
+                "remarks": action.remarks,
+                "at": _iso(action.created_at),
+            } for action in actions],
+        })
+
     return {
         "id": session.id,
         "scenario": session.scenario,
@@ -322,21 +466,88 @@ def session_payload(db: Session, session: DemoSession) -> dict:
         "status": session.status,
         "current_step": session.current_step,
         "institution_id": session.institution_id,
-        "complaints": [{
-            "id": row.id, "complaint_no": row.complaint_no, "title": row.title,
-            "bureau": row.assigned_bureau.code, "status": row.status.value,
-            "sla_deadline": row.sla_deadline.isoformat() if row.sla_deadline else None,
-        } for row in complaints],
+        "institution": ({
+            "id": institution.id,
+            "permanent_id": institution.permanent_id,
+            "name": institution.name,
+            "address": institution.address,
+            "city": institution.city,
+            "state": institution.state,
+            "region": institution.region,
+            "postal_code": institution.postal_code,
+            "institution_type": institution.institution_type,
+            "approval_status": institution.approval_status,
+            "is_synthetic": institution.is_synthetic,
+            "created_at": _iso(institution.created_at),
+        } if institution else None),
+        "complaints": complaint_payload,
+        "analysis": (session.result_json or {}).get("analysis"),
+        "ai_runtime": {**MODEL_STATUS, "embedding_dimensions": 384},
         "finding": ({
-            "id": finding.id, "type": finding.finding_type, "semantic_score": finding.similarity_score,
-            "hybrid_score": finding.hybrid_score, "severity": finding.severity,
-            "review_state": finding.review_state.value, "reasons": finding.reasons,
+            "id": finding.id,
+            "type": finding.finding_type,
+            "semantic_score": finding.similarity_score,
+            "hybrid_score": finding.hybrid_score,
+            "severity": finding.severity,
+            "review_state": finding.review_state.value,
+            "reasons": finding.reasons,
+            "recommendation": finding.recommendation,
+            "detected_at": _iso(finding.detected_at),
+            "review": ({
+                "id": review.id,
+                "decision": review.decision,
+                "notes": review.notes,
+                "reviewer_id": review.reviewer_id,
+                "reviewer_name": db.get(User, review.reviewer_id).full_name,
+                "reviewed_at": _iso(review.created_at),
+            } if review else None),
         } if finding else None),
         "coordination": ({
-            "id": coordination.id, "title": coordination.title, "target_date": coordination.target_date.isoformat() if coordination.target_date else None,
-            "participants": db.query(CoordinationParticipant).filter_by(coordination_id=coordination.id).count(),
-            "open_actions": db.query(CoordinationActionItem).filter_by(coordination_id=coordination.id, completed=False).count(),
+            "id": coordination.id,
+            "title": coordination.title,
+            "status": coordination.status,
+            "summary": coordination.summary,
+            "owner_id": coordination.owner_id,
+            "owner_name": owner.full_name if owner else None,
+            "target_date": _iso(coordination.target_date),
+            "created_at": _iso(coordination.created_at),
+            "complaint_ids": linked_ids,
+            "participants": [{
+                "bureau_id": participant.bureau_id,
+                "bureau_name": db.get(Bureau, participant.bureau_id).name,
+                "officer_id": participant.user_id,
+                "officer_name": db.get(User, participant.user_id).full_name if participant.user_id else None,
+            } for participant in participant_rows],
+            "actions": [{
+                "id": action.id,
+                "title": action.title,
+                "assignee_id": action.assignee_id,
+                "assignee_name": db.get(User, action.assignee_id).full_name,
+                "due_date": _iso(action.due_date),
+                "completed": action.completed,
+                "created_at": _iso(action.created_at),
+            } for action in action_rows],
         } if coordination else None),
+        "notifications": [{
+            "id": row.id,
+            "type": row.type,
+            "title": row.title,
+            "message": row.message,
+            "recipient_id": row.recipient_id,
+            "recipient_name": db.get(User, row.recipient_id).full_name,
+            "destination": row.destination,
+            "created_at": _iso(row.created_at),
+        } for row in notifications],
+        "audit_events": [{
+            "id": row.id,
+            "action": row.action,
+            "entity_type": row.entity_type,
+            "entity_id": row.entity_id,
+            "actor_name": db.get(User, row.actor_id).full_name if row.actor_id else "System",
+            "created_at": _iso(row.created_at),
+        } for row in audits],
         "result": session.result_json or {},
-        "created_at": session.created_at.isoformat(),
+        "created_at": _iso(session.created_at),
+        "updated_at": _iso(session.updated_at),
+        "archived_at": _iso(session.archived_at),
     }

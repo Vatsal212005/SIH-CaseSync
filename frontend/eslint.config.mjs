@@ -5,6 +5,6 @@ export default defineConfig([
   ...nextVitals,
   ...nextTs,
   {rules: {"@typescript-eslint/no-explicit-any": "off", "react-hooks/incompatible-library": "off"}},
-  globalIgnores([".next/**", "next-env.d.ts"])
+  globalIgnores([".next/**", ".vercel/**", "out/**", "build/**", "next-env.d.ts"])
 ]);
 

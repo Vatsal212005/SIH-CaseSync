@@ -30,6 +30,15 @@ def ensure_embedding(db: Session, complaint: Complaint) -> ComplaintEmbedding:
     return row
 
 
+def analyze_pair(db: Session, first: Complaint, second: Complaint) -> dict:
+    """Return the real engine evidence without deciding whether to persist a finding."""
+    first_embedding = ensure_embedding(db, first)
+    second_embedding = ensure_embedding(db, second)
+    result = score_pair(first, second, first_embedding.vector, second_embedding.vector)
+    result["backend"] = first_embedding.model_name
+    return result
+
+
 def detect_overlaps(db: Session, complaint: Complaint) -> list[OverlapFinding]:
     if complaint.status not in ACTIVE:
         return []

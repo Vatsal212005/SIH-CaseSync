@@ -2,6 +2,14 @@
 
 Use `central@casesync.demo` / `CaseSync@2026` after running the synthetic seed.
 
+Start with **Interactive Demo** for the fastest evidence-first walkthrough. Each scenario uses real services and persists its own synthetic records:
+
+- **AI detects duplicate investigations:** register the institution, create two cross-bureau complaints, run the real analysis, record an explicit human decision, and only then create accountable coordination.
+- **Same institution, different complaints:** compare complete fee and laboratory allegations, inspect the actual score, and show that identity alone never creates an automatic duplicate verdict.
+- **SLA violation and escalation:** create a deadline-sensitive case, assign its officer, run the idempotent SLA scan, and inspect notification and escalation evidence.
+
+Use **Continue current session** after a refresh, **Presentation mode** for judges, and **Technical details** for model/backend/record evidence. Starting a new isolated run archives only the old session; it does not delete the records it created.
+
 1. **Login:** point out the explicit synthetic-data notice and secure session behavior.
 2. **Overview:** show the ten live KPIs, monthly trend, categories, bureau workload and urgent queue. Values are SQL aggregates, not static cards.
 3. **Institution intelligence:** open Institutions, search a `DEMO-AICTE-` ID and drill into the cross-bureau complaint history.

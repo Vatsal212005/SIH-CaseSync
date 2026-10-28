@@ -13,6 +13,7 @@ The repository runs either as a Docker deployment with PostgreSQL/pgvector or as
 - Complaint registration, assignment, remarks, transfer/acceptance, escalation, disposal, reopening, attachment storage, related-case links and immutable action history.
 - Hybrid overlap detection using canonical identity, bureau/activity rules and `sentence-transformers/all-MiniLM-L6-v2` embeddings stored in PostgreSQL with pgvector; deterministic degradation preserves workflows if the model is unavailable.
 - Explainable findings, severity, side-by-side comparison, persistent human review, suppression by text fingerprint, case linking and coordination creation.
+- Interactive evidence studio with three deterministic scenarios, full complaint text, visible MiniLM/rule evidence, explicit human review, coordination and SLA before/after states, technical/presentation modes, and recoverable sessions.
 - Central dashboard, database-backed global search, personal queues, notifications and idempotent scheduled SLA reminders.
 - Coordination records, participants, owners, action items and deadlines.
 - Filtered analytics plus database-derived CSV and PDF exports.
@@ -47,7 +48,51 @@ SIH/
 └── .env.example
 ```
 
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [AI_ENGINE.md](docs/AI_ENGINE.md), [API.md](docs/API.md), and [DEMO_GUIDE.md](docs/DEMO_GUIDE.md).
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md), [AI_ENGINE.md](docs/AI_ENGINE.md), [API.md](docs/API.md), [DEMO_GUIDE.md](docs/DEMO_GUIDE.md), the [complete prototype walkthrough](docs/COMPLETE_DEMO_WALKTHROUGH.md), and the [three-minute SIH presentation script](docs/SIH_3_MINUTE_DEMO.md).
+
+## Product tour
+
+| Workspace | Purpose | Backing behavior |
+|---|---|---|
+| Overview | Command dashboard, action centre, KPI cards, trend charts, bureau workload and urgent cases | Aggregated from the current complaint, institution, overlap and SLA records |
+| Interactive Demo | Guided, repeatable proof of overlap detection, false-positive control and SLA escalation | Creates isolated synthetic records through the same backend services used by the normal UI |
+| Institutions | Canonical registry, aliases, filters, duplicate prevention and institution-level intelligence | Searchable SQL records with CSV intake and data provenance |
+| Complaints | Registration, assignment, remarks, transfer, escalation, disposal, reopening, attachments and links | Server-authorized lifecycle transitions with immutable action history |
+| Overlap Intelligence | Ranked cross-bureau findings, side-by-side evidence, human review and coordination initiation | Hybrid MiniLM plus deterministic administrative signals; no hardcoded match outcomes |
+| Coordination Center | Lead bureau, participants, owner, target date and accountable action items | Persistent cross-bureau records created only after an explicit workflow action |
+| My Work Queue | Bureau- and officer-scoped operational work | Derived from assignments, role scope, deadlines and unresolved actions |
+| Alerts & Notifications | Overlap, transfer, coordination and SLA signals | Database-backed, recipient-scoped and idempotently generated |
+| Reports & Analytics | Filters, status/category/bureau analysis, CSV export and PDF reporting | Calculated from stored records; empty date filters are omitted from API requests |
+| Audit Trail | Actor, event, entity and timestamp evidence | Append-only operational audit events |
+| Administration | Users, roles, bureau membership, SLA policies, AI thresholds and adapters | Restricted to authorized administrative roles |
+
+All application routes are served by the optional catch-all Next.js page, so `/institutions`, `/complaints`, `/demo`, `/overlaps`, `/coordination`, `/reports` and detail pages work both through sidebar navigation and direct browser loads.
+
+## Interactive demonstration scenarios
+
+The Demo Center is intentionally deterministic at the input level so a presentation is repeatable, while every output is produced by real application services and current database state.
+
+1. **AI detects duplicate investigations** — registers a canonical synthetic institution, receives paraphrased complaints in PGRC and the Regulation Bureau, runs actual MiniLM inference, displays explainable evidence, records a separate human decision, and creates accountable coordination.
+2. **Same institution, different complaints** — proves that sharing an institution does not automatically make two cases duplicates; unrelated subject matter can be reviewed and suppressed.
+3. **SLA violation and escalation** — shows configured deadlines, an overdue transition, recipient notifications, escalation and the updated lifecycle/audit evidence.
+
+The UI distinguishes model classification, ranking score, human review state and administrative action. The overlap score is not presented as a probability or autonomous legal decision.
+
+## Complaint and overlap lifecycle
+
+```text
+Complaint received
+  -> canonical institution/category resolution
+  -> bureau assignment and SLA calculation
+  -> embedding plus deterministic candidate comparison
+  -> explainable overlap finding
+  -> authorized human review
+  -> optional case link and cross-bureau coordination
+  -> action ownership, notifications and audit evidence
+  -> disposal or reopening
+```
+
+Candidate generation is constrained by canonical institution and lifecycle relevance. The engine then combines semantic similarity with transparent rule features such as shared institution, related category, cross-bureau ownership and active status. Review decisions persist independently of the computed classification, and text fingerprints allow stale decisions to be invalidated when complaint content materially changes.
 
 ## Fastest start on Windows 11 without Docker
 
@@ -114,7 +159,7 @@ The native Windows workflow has been exercised with Python 3.12.7, CPU-only PyTo
 - overlap review, transfers and cross-bureau coordination;
 - reports, analytics, notifications and SLA scanning;
 - a controlled stop/start cycle with SQLite data preservation;
-- all six Playwright end-to-end journeys.
+- the complete Playwright end-to-end suite, including all three interactive demonstration journeys and refresh recovery.
 
 ## Run with Docker (recommended)
 

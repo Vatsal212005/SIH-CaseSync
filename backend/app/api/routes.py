@@ -37,7 +37,7 @@ from app.models import *
 from app.schemas import *
 from app.services.audit import audit, notify
 from app.services.coordination import coordinate_finding
-from app.services.demo import advance_session, restart_session, session_payload, start_session
+from app.services.demo import SCENARIOS, advance_session, restart_session, session_payload, start_session
 from app.services.overlap import detect_overlaps
 from app.services.sla import deadline_for, run_sla_check
 from app.services.workflow import perform_action
@@ -624,7 +624,32 @@ def create_coordination(payload: CoordinationInput, user: User = Depends(require
 
 @router.post("/demo/sessions", dependencies=[Depends(verify_csrf)])
 def create_demo_session(payload: DemoStartInput, user: User = Depends(require_roles(Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.BUREAU_HEAD)), db: Session = Depends(get_db)):
-    return session_payload(db, start_session(db, payload.scenario, user))
+    return session_payload(db, start_session(db, payload.scenario, user), user)
+
+
+@router.get("/demo/sessions/current")
+def current_demo_session(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not settings.demo_mode:
+        raise HTTPException(404, "Interactive demos are disabled")
+    current = db.query(DemoSession).filter(
+        DemoSession.created_by_id == user.id,
+        DemoSession.status.in_(["active", "completed"]),
+    ).order_by(DemoSession.updated_at.desc()).first()
+    recent = db.query(DemoSession).filter(
+        DemoSession.created_by_id == user.id,
+        DemoSession.status.in_(["completed", "archived"]),
+    ).order_by(DemoSession.updated_at.desc()).limit(6).all()
+    return {
+        "current": session_payload(db, current, user) if current else None,
+        "recent": [{
+            "id": row.id,
+            "scenario": row.scenario,
+            "title": SCENARIOS[row.scenario]["title"],
+            "status": row.status,
+            "current_step": row.current_step,
+            "updated_at": row.updated_at.isoformat(),
+        } for row in recent],
+    }
 
 
 @router.get("/demo/sessions/{session_id}")
@@ -636,7 +661,7 @@ def get_demo_session(session_id: str, user: User = Depends(get_current_user), db
         raise HTTPException(404, "Demo session not found")
     if session.created_by_id != user.id and user.role not in {Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.AUDITOR}:
         raise HTTPException(403, "Demo session access denied")
-    return session_payload(db, session)
+    return session_payload(db, session, user)
 
 
 @router.post("/demo/sessions/{session_id}/advance", dependencies=[Depends(verify_csrf)])
@@ -644,7 +669,7 @@ def advance_demo(session_id: str, payload: DemoAdvanceInput, user: User = Depend
     session = db.get(DemoSession, session_id)
     if not session:
         raise HTTPException(404, "Demo session not found")
-    return session_payload(db, advance_session(db, session, user, payload.expected_step))
+    return session_payload(db, advance_session(db, session, user, payload.expected_step), user)
 
 
 @router.post("/demo/sessions/{session_id}/restart", dependencies=[Depends(verify_csrf)])
@@ -652,7 +677,21 @@ def restart_demo(session_id: str, user: User = Depends(require_roles(Role.SYSTEM
     session = db.get(DemoSession, session_id)
     if not session:
         raise HTTPException(404, "Demo session not found")
-    return session_payload(db, restart_session(db, session, user))
+    return session_payload(db, restart_session(db, session, user), user)
+
+
+@router.post("/demo/sessions/{session_id}/archive", dependencies=[Depends(verify_csrf)])
+def archive_demo(session_id: str, user: User = Depends(require_roles(Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN, Role.BUREAU_HEAD)), db: Session = Depends(get_db)):
+    session = db.get(DemoSession, session_id)
+    if not session:
+        raise HTTPException(404, "Demo session not found")
+    if session.created_by_id != user.id and user.role not in {Role.SYSTEM_ADMIN, Role.CENTRAL_ADMIN}:
+        raise HTTPException(403, "Demo session access denied")
+    session.status = "archived"
+    session.archived_at = datetime.now(timezone.utc)
+    audit(db, user.id, "demo.archived", "demo_session", session.id)
+    db.commit()
+    return {"id": session.id, "status": session.status}
 
 
 @router.post("/coordination/{coordination_id}/actions", dependencies=[Depends(verify_csrf)])

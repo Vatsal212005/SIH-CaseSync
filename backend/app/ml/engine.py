@@ -71,7 +71,14 @@ def score_pair(a, b, vector_a=None, vector_b=None) -> dict:
     if vector_b is None:
         vector_b, _ = embed(f"{b.title}. {b.description}")
     semantic = cosine(vector_a, vector_b)
-    hybrid = min(1.0, semantic * 0.62 + (0.18 if same_institution else 0) + (0.08 if category_match else 0) + (0.07 if cross_bureau else 0) + (0.05 if active else 0))
+    components = {
+        "semantic": round(semantic * 0.62, 4),
+        "institution": 0.18 if same_institution else 0.0,
+        "category": 0.08 if category_match else 0.0,
+        "cross_bureau": 0.07 if cross_bureau else 0.0,
+        "active_cases": 0.05 if active else 0.0,
+    }
+    hybrid = min(1.0, sum(components.values()))
     reasons = []
     if same_institution:
         reasons.append("Same verified canonical institution and AICTE Permanent ID")
@@ -98,7 +105,36 @@ def score_pair(a, b, vector_a=None, vector_b=None) -> dict:
     else:
         finding_type = "unrelated"
     severity = "critical" if hybrid >= 0.9 else "high" if hybrid >= 0.75 else "medium" if hybrid >= 0.55 else "low"
-    return {"semantic": round(semantic, 4), "hybrid": round(hybrid, 4), "finding_type": finding_type, "severity": severity, "reasons": reasons, "backend": backend}
+    return {
+        "semantic": round(semantic, 4),
+        "hybrid": round(hybrid, 4),
+        "finding_type": finding_type,
+        "severity": severity,
+        "reasons": reasons,
+        "backend": backend,
+        "model": settings.embedding_model,
+        "embedding_dimensions": len(vector_a),
+        "facts": {
+            "same_institution": same_institution,
+            "category_match": category_match,
+            "cross_bureau": cross_bureau,
+            "both_active": active,
+        },
+        "components": components,
+        "weights": {
+            "semantic": 0.62,
+            "institution": 0.18,
+            "category": 0.08,
+            "cross_bureau": 0.07,
+            "active_cases": 0.05,
+        },
+        "thresholds": {
+            "stored_finding": 0.42,
+            "cross_bureau_related_semantic": 0.52,
+            "likely_duplicate_semantic": 0.82,
+            "similar_different_institution_semantic": 0.86,
+        },
+    }
 
 
 def institution_similarity(a: str, b: str) -> float:
